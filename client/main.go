@@ -62,7 +62,7 @@ func cmdUp(args []string) {
 	server := fs.String("server", "", "coordination server base URL, e.g. https://1.2.3.4:8443")
 	authKey := fs.String("authkey", "", "auth key (only needed on first registration)")
 	hostname := fs.String("hostname", "", "this device's name shown to peers")
-	iface := fs.String("iface", "govpn0", "tun interface name")
+	iface := fs.String("iface", core.DefaultIfaceName(), "tun interface name")
 	pollInterval := fs.Duration("poll", 10*time.Second, "how often to refresh the peer list")
 	fs.Parse(args)
 

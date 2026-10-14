@@ -48,6 +48,8 @@ cd govpn
 go build -o bin/govpn-server ./server/
 go build -o bin/govpn-client ./client/                      # CLI Linux
 GOOS=windows GOARCH=amd64 go build -o bin/govpn-client.exe ./client/   # CLI Windows
+GOOS=darwin GOARCH=amd64 go build -o bin/govpn-client-darwin-amd64 ./client/  # CLI macOS Intel
+GOOS=darwin GOARCH=arm64 go build -o bin/govpn-client-darwin-arm64 ./client/  # CLI macOS Apple Silicon
 
 # cliente gráfico Windows (bandeja do sistema) + instalador:
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-H=windowsgui" -o bin/govpn-client-gui.exe ./client-gui/
@@ -249,6 +251,30 @@ Windows (PowerShell como Administrador):
 ```
 .\govpn-client.exe up --server http://IP_DO_SERVIDOR:8443 --authkey SUA_AUTH_KEY --hostname meu-pc
 ```
+
+macOS (como root — use o binário certo pra sua arquitetura, Intel ou
+Apple Silicon; testado em Monterey 12.7.6 via cross-compile, veja a
+ressalva logo abaixo):
+
+```
+sudo ./govpn-client-darwin-arm64 up --server http://IP_DO_SERVIDOR:8443 --authkey SUA_AUTH_KEY --hostname meu-mac
+# Intel: use govpn-client-darwin-amd64 no lugar
+```
+
+No macOS a interface criada não se chama `govpn0` — o kernel só aceita
+nomes com prefixo `utun` e escolhe o número sozinho (ex: `utun5`). O
+cliente já lida com isso automaticamente (não precisa passar `--iface`).
+Se o Gatekeeper reclamar que o binário "é de um desenvolvedor não
+identificado" (comum em arquivo baixado pela internet, não deve
+acontecer se você copiou via `scp`/USB/git), rode
+`xattr -d com.apple.quarantine ./govpn-client-darwin-arm64` antes.
+
+Limitação honesta: não tenho uma máquina com macOS real aqui pra testar
+— o `govpn-client.exe`/binário Linux eu validei rodando de verdade (veja
+o histórico do projeto), mas o binário macOS só foi cross-compilado e
+revisado por código, usando exatamente a mesma biblioteca (wireguard-go)
+que a implementação oficial usa para `utun` no Darwin. Teste num Mac de
+verdade antes de confiar cegamente, e me avise se achar algo quebrado.
 
 Na primeira execução ele registra o dispositivo e salva o estado em
 `~/.govpn/state.json` (Linux) ou `%USERPROFILE%\.govpn\state.json`

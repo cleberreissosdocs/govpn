@@ -28,6 +28,11 @@ func ConfigureInterface(ifaceName, ip, subnetCIDR string) error {
 	return nil
 }
 
+// DefaultIfaceName is the --iface flag default for this platform. Linux
+// lets you pick any name; macOS forces a "utun" prefix (handled in
+// iface_darwin.go) so this can't be a shared cross-platform constant.
+func DefaultIfaceName() string { return "govpn0" }
+
 func run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	out, err := cmd.CombinedOutput()

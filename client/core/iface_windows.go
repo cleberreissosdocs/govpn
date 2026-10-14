@@ -27,6 +27,8 @@ func ConfigureInterface(ifaceName, ip, subnetCIDR string) error {
 	return nil
 }
 
+func DefaultIfaceName() string { return "govpn0" }
+
 func run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	out, err := cmd.CombinedOutput()
