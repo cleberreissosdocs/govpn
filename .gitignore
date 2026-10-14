@@ -1,0 +1,11 @@
+# build artifacts (compile them yourself with `go build`, or use Docker)
+bin/
+
+# local runtime data (sqlite db, wal/shm, backups) — never commit live data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# local test/scratch files
+*.log

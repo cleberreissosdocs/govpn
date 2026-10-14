@@ -1,0 +1,6 @@
+bin/
+client/
+client-gui/
+*.md
+.git/
+data/
