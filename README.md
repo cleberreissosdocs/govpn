@@ -292,3 +292,50 @@ Ver status local:
 
 Depois que dois ou mais clientes estiverem rodando, cada um enxerga os
 IPs dos outros na faixa 100.64.x.x e consegue `ping` diretamente.
+
+## Instalação do cliente Linux como serviço do sistema
+
+Pra não precisar deixar um terminal aberto rodando `govpn-client up`,
+tem um instalador em `scripts/install-client.sh` que:
+
+- Copia o binário pra `/opt/govpn/govpn-client`
+- Cria um arquivo de configuração editável em `/etc/govpn/config.yml`
+  (permissão `600`, só root lê — protege a auth key)
+- Cria e habilita um serviço systemd (`govpn-client.service`) que sobe
+  sozinho no boot e reinicia automaticamente se cair
+
+```
+sudo ./scripts/install-client.sh                      # usa ./govpn-client ao lado do script
+sudo ./scripts/install-client.sh /caminho/pro/binario  # ou aponta o binário explicitamente
+
+# edite /etc/govpn/config.yml com o servidor e a auth key, depois:
+sudo systemctl start govpn-client
+sudo journalctl -u govpn-client -f    # acompanhar os logs
+```
+
+Formato do `config.yml`:
+
+```yaml
+server: "http://SEU_SERVIDOR:8443"
+authkey: "SUA_AUTH_KEY"
+hostname: "nome-do-dispositivo"
+iface: "govpn0"
+poll_interval: "10s"
+```
+
+A auth key só é usada na primeira vez (registro inicial) — depois disso
+o dispositivo fica identificado pela chave salva em
+`/var/lib/govpn/state.json`, então pode deixar o campo em branco depois
+do primeiro `systemctl start` funcionar, se quiser.
+
+Testado de ponta a ponta: rodei o instalador de verdade, configurei o
+`config.yml` com um servidor real, subi o serviço via `systemctl start`
+e confirmei a interface `govpn0` criada, IP atribuído pelo servidor e
+`systemctl is-enabled` mostrando `enabled` (sobe sozinho no boot).
+
+Pra desinstalar: `sudo ./scripts/uninstall-client.sh` (pergunta se quer
+apagar config/estado também, ou só remove o serviço e o binário).
+
+Esse instalador é só para Linux. Windows usa o `govpn-client-gui.exe`
+(bandeja do sistema, com "Iniciar com o Windows" no menu) ou o instalador
+`govpn-setup.exe` — veja a seção acima.

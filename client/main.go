@@ -36,6 +36,12 @@ Usage:
       reuse the saved state (~/.govpn/state.json) and the flags above
       are optional.
 
+  govpn-client up --config /etc/govpn/config.yml
+      Same thing, reading server/authkey/hostname/iface/poll_interval
+      from a YAML file instead of flags — handy for systemd/unattended
+      setups. Any flag passed alongside --config still overrides the
+      matching field in the file.
+
   govpn-client status
       Prints the locally saved state (assigned IP, server, etc).
 
@@ -59,12 +65,43 @@ func cmdStatus(args []string) {
 
 func cmdUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
+	configPath := fs.String("config", "", "path to a YAML config file (server/authkey/hostname/iface/poll_interval) — flags above still override it")
 	server := fs.String("server", "", "coordination server base URL, e.g. https://1.2.3.4:8443")
 	authKey := fs.String("authkey", "", "auth key (only needed on first registration)")
 	hostname := fs.String("hostname", "", "this device's name shown to peers")
 	iface := fs.String("iface", core.DefaultIfaceName(), "tun interface name")
 	pollInterval := fs.Duration("poll", 10*time.Second, "how often to refresh the peer list")
 	fs.Parse(args)
+
+	// Track which flags the user actually passed on the command line, so
+	// an explicit flag always wins over the config file, and the config
+	// file always wins over the flag's zero-value default.
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+
+	if *configPath != "" {
+		cfg, err := core.LoadFileConfig(*configPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if cfg != nil {
+			if !explicit["server"] && cfg.Server != "" {
+				*server = cfg.Server
+			}
+			if !explicit["authkey"] && cfg.AuthKey != "" {
+				*authKey = cfg.AuthKey
+			}
+			if !explicit["hostname"] && cfg.Hostname != "" {
+				*hostname = cfg.Hostname
+			}
+			if !explicit["iface"] && cfg.Iface != "" {
+				*iface = cfg.Iface
+			}
+			if !explicit["poll"] {
+				*pollInterval = core.ParsePollInterval(cfg.PollInterval, *pollInterval)
+			}
+		}
+	}
 
 	eng := core.NewEngine(*iface, *pollInterval)
 	if err := eng.LoadOrRegister(*server, *authKey, *hostname); err != nil {
