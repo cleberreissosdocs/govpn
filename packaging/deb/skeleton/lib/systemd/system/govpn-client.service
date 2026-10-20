@@ -1,0 +1,16 @@
+[Unit]
+Description=govpn client (mesh VPN)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/govpn-client up --config /etc/govpn/config.yml
+Environment=GOVPN_STATE_DIR=/var/lib/govpn
+Restart=on-failure
+RestartSec=5
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

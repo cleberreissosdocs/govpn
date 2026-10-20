@@ -339,3 +339,33 @@ apagar config/estado também, ou só remove o serviço e o binário).
 Esse instalador é só para Linux. Windows usa o `govpn-client-gui.exe`
 (bandeja do sistema, com "Iniciar com o Windows" no menu) ou o instalador
 `govpn-setup.exe` — veja a seção acima.
+
+## Pacote .deb (Debian/Ubuntu)
+
+Se preferir um pacote de verdade em vez do script (facilita gerenciar
+múltiplas máquinas, atualizar com `apt`/`dpkg`, etc), tem um empacotador
+em `packaging/deb/`. Ele faz exatamente a mesma coisa que o
+`install-client.sh` (binário em `/usr/bin`, config em `/etc/govpn/`,
+serviço systemd em `/lib/systemd/system`), só que embalado como `.deb`
+de verdade, com `postinst`/`prerm`/`postrm` cuidando de habilitar o
+serviço, proteger a config (`conffiles`, então um `apt upgrade` não
+sobrescreve sua auth key) e limpar tudo no `purge`.
+
+```
+./packaging/deb/build-deb.sh                # versão 1.0.0, amd64 (builda o binário se precisar)
+./packaging/deb/build-deb.sh 1.2.0 arm64     # versão e arquitetura customizadas
+
+sudo dpkg -i bin/govpn-client_1.0.0_amd64.deb
+sudo nano /etc/govpn/config.yml              # preenche server + authkey
+sudo systemctl start govpn-client
+```
+
+Desinstalar mantendo a config: `sudo apt remove govpn-client` (ou
+`dpkg -r`). Desinstalar removendo tudo (config + chaves):
+`sudo apt purge govpn-client` (ou `dpkg -P`).
+
+Testado de ponta a ponta: buildei o `.deb`, instalei com `dpkg -i` numa
+máquina real, confirmei no `dpkg -l` (status `ii`), serviço systemd
+habilitado automaticamente, `/etc/govpn/config.yml` criado com
+permissão 600, e o `dpkg -P` (purge) removendo tudo direitinho
+(config, estado, serviço) sem deixar resíduo.

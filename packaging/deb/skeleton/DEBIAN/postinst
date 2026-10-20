@@ -1,0 +1,31 @@
+#!/bin/sh
+set -e
+
+# postinst runs with $1=configure on a fresh install or upgrade.
+if [ "$1" = "configure" ]; then
+	mkdir -p /var/lib/govpn
+	chmod 700 /var/lib/govpn
+
+	if [ -f /etc/govpn/config.yml ]; then
+		chmod 600 /etc/govpn/config.yml
+	fi
+
+	if [ -d /run/systemd/system ]; then
+		systemctl daemon-reload || true
+		systemctl enable govpn-client.service || true
+	fi
+
+	cat <<'EOF'
+
+govpn-client instalado.
+
+Edite /etc/govpn/config.yml com o endereço do seu servidor e a auth key,
+depois rode:
+    sudo systemctl start govpn-client
+    sudo journalctl -u govpn-client -f   # acompanhar os logs
+
+O serviço já está habilitado e vai subir sozinho no próximo boot.
+EOF
+fi
+
+exit 0

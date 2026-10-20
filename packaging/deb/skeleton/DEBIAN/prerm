@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+# prerm runs with $1=remove before files are deleted (on both plain
+# "remove" and "purge"), so stop the running service first either way.
+if [ "$1" = "remove" ] || [ "$1" = "upgrade" ] || [ "$1" = "deconfigure" ]; then
+	if [ -d /run/systemd/system ]; then
+		systemctl stop govpn-client.service || true
+	fi
+fi
+
+exit 0

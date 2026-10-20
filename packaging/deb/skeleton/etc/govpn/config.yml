@@ -1,0 +1,15 @@
+# Configuração do govpn-client.
+# Preencha server e authkey (gerados no painel admin do govpn-server,
+# em /admin) e depois rode:
+#   sudo systemctl start govpn-client
+#
+# Depois do primeiro registro bem-sucedido, o dispositivo fica
+# identificado pela chave salva em /var/lib/govpn/state.json — você
+# pode deixar authkey em branco nas próximas vezes (ela só é usada uma
+# vez, no primeiro registro).
+
+server: "http://SEU_SERVIDOR:8443"
+authkey: "SUA_AUTH_KEY"
+hostname: ""
+iface: "govpn0"
+poll_interval: "10s"

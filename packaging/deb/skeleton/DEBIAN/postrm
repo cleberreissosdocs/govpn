@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+# postrm runs with $1=remove (package files already gone, but conffiles
+# and dirs may remain) or $1=purge (we should clean up everything,
+# including the config — it may hold an auth key).
+if [ "$1" = "purge" ]; then
+	rm -rf /etc/govpn /var/lib/govpn
+fi
+
+if [ -d /run/systemd/system ]; then
+	systemctl daemon-reload || true
+fi
+
+exit 0
