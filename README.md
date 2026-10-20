@@ -173,7 +173,9 @@ imagem `distroless` mínima, só o binário + libs do sistema, sem shell/
 apt/etc — poucos MB e superfície de ataque pequena) e sobe o container
 com:
 
-- Porta `8443` publicada no host
+- Porta `28443` publicada no host (diferente da `8443` padrão do binário
+  standalone, de propósito — evita conflito comum com outras apps
+  open-source que costumam usar 8443/8080/9000/etc)
 - Banco de dados persistido em `./data/govpn.db` no host (sobrevive a
   `docker compose down` / recriação do container)
 - Reinício automático (`restart: unless-stopped`)

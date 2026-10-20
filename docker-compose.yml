@@ -5,7 +5,7 @@ services:
     container_name: govpn-server
     restart: unless-stopped
     ports:
-      - "8443:8443"
+      - "28443:28443"
     volumes:
       # tudo que precisa sobreviver a um restart/recriação do container
       # (banco de dados + backups feitos pelo painel admin) vive aqui.
@@ -13,7 +13,7 @@ services:
     command:
       - serve
       - --db=/data/govpn.db
-      - --addr=:8443
+      - --addr=:28443
       - --admin-user=admin
       - --admin-pass=TROQUE_ESTA_SENHA
       - --online-threshold=30s
