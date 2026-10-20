@@ -71,6 +71,7 @@ func cmdUp(args []string) {
 	hostname := fs.String("hostname", "", "this device's name shown to peers")
 	iface := fs.String("iface", core.DefaultIfaceName(), "tun interface name")
 	pollInterval := fs.Duration("poll", 10*time.Second, "how often to refresh the peer list")
+	insecure := fs.Bool("insecure", false, "skip TLS certificate verification (needed for the server's default self-signed cert; only safe on a trusted network — prefer a real cert on the server instead)")
 	fs.Parse(args)
 
 	// Track which flags the user actually passed on the command line, so
@@ -100,10 +101,14 @@ func cmdUp(args []string) {
 			if !explicit["poll"] {
 				*pollInterval = core.ParsePollInterval(cfg.PollInterval, *pollInterval)
 			}
+			if !explicit["insecure"] && cfg.InsecureTLS {
+				*insecure = true
+			}
 		}
 	}
 
 	eng := core.NewEngine(*iface, *pollInterval)
+	eng.InsecureTLS = *insecure
 	if err := eng.LoadOrRegister(*server, *authKey, *hostname); err != nil {
 		log.Fatal(err)
 	}

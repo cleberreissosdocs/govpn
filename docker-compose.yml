@@ -17,3 +17,11 @@ services:
       - --admin-user=admin
       - --admin-pass=TROQUE_ESTA_SENHA
       - --online-threshold=30s
+      # Sem --no-tls, --tls-cert/--tls-key: o servidor gera e reutiliza um
+      # certificado autoassinado em /data (persiste entre restarts do
+      # container). Para um certificado de verdade, monte-o num volume e
+      # passe --tls-cert/--tls-key apontando pra ele.
+      #
+      # --admin-pass fica visível via `docker inspect`/`ps`. Prefira
+      # --admin-pass-file apontando pra um arquivo montado como volume
+      #/secret, se isso for uma preocupação no seu ambiente.

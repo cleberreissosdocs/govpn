@@ -71,6 +71,7 @@ func onReady() {
 	eng = core.NewEngine(core.DefaultIfaceName(), 10*time.Second)
 	eng.OnStateChange = updateUI
 	eng.OnLog = appendLog
+	eng.TryLoadSaved() // reuse a previously saved profile if this isn't the first run
 
 	go connectLoop()
 	go menuLoop()
@@ -155,6 +156,7 @@ func loadFromFileConfig() error {
 	if d := core.ParsePollInterval(cfg.PollInterval, 0); d > 0 {
 		eng.PollInterval = d
 	}
+	eng.InsecureTLS = cfg.InsecureTLS
 	return eng.RegisterNew(cfg.Server, cfg.AuthKey, hostname)
 }
 

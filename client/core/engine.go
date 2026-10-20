@@ -15,6 +15,7 @@ import (
 type Engine struct {
 	IfaceName     string
 	PollInterval  time.Duration
+	InsecureTLS   bool         // skip TLS cert verification when talking to the server (self-signed cert)
 	OnLog         func(string) // optional; defaults to log.Printf if nil
 	OnStateChange func(connected bool)
 
@@ -48,6 +49,7 @@ func (e *Engine) LoadOrRegister(server, authKey, hostname string) error {
 		if server != "" {
 			st.ServerURL = server // allow overriding the server on an existing profile
 		}
+		e.InsecureTLS = st.InsecureTLS
 		e.mu.Lock()
 		e.state = st
 		e.mu.Unlock()
@@ -64,7 +66,7 @@ func (e *Engine) LoadOrRegister(server, authKey, hostname string) error {
 	if hn == "" {
 		hn, _ = os.Hostname()
 	}
-	sc := NewServerClient(server, "")
+	sc := NewServerClient(server, "", e.InsecureTLS)
 	reg, err := sc.Register(authKey, pub, hn)
 	if err != nil {
 		return fmt.Errorf("register with server: %w", err)
@@ -77,6 +79,7 @@ func (e *Engine) LoadOrRegister(server, authKey, hostname string) error {
 		AssignedIP:  reg.AssignedIP,
 		SubnetCIDR:  reg.SubnetCIDR,
 		Hostname:    hn,
+		InsecureTLS: e.InsecureTLS,
 	}
 	if err := SaveState(st); err != nil {
 		return fmt.Errorf("save state: %w", err)
@@ -94,6 +97,7 @@ func (e *Engine) TryLoadSaved() bool {
 	if err != nil {
 		return false
 	}
+	e.InsecureTLS = st.InsecureTLS
 	e.mu.Lock()
 	e.state = st
 	e.mu.Unlock()
@@ -116,7 +120,7 @@ func (e *Engine) RegisterNew(server, authKey, hostname string) error {
 	if hn == "" {
 		hn, _ = os.Hostname()
 	}
-	sc := NewServerClient(server, "")
+	sc := NewServerClient(server, "", e.InsecureTLS)
 	reg, err := sc.Register(authKey, pub, hn)
 	if err != nil {
 		return fmt.Errorf("register with server: %w", err)
@@ -129,6 +133,7 @@ func (e *Engine) RegisterNew(server, authKey, hostname string) error {
 		AssignedIP:  reg.AssignedIP,
 		SubnetCIDR:  reg.SubnetCIDR,
 		Hostname:    hn,
+		InsecureTLS: e.InsecureTLS,
 	}
 	if err := SaveState(st); err != nil {
 		return fmt.Errorf("save state: %w", err)
@@ -188,7 +193,7 @@ func (e *Engine) Connect() error {
 	}
 	e.logf("interface %s up with ip %s", wg.IfaceName, st.AssignedIP)
 
-	sc := NewServerClient(st.ServerURL, st.DeviceToken)
+	sc := NewServerClient(st.ServerURL, st.DeviceToken, e.InsecureTLS)
 	listenPort, err := wg.ListenPort()
 	if err != nil {
 		e.logf("warning: could not read listen port: %v", err)

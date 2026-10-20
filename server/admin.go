@@ -66,10 +66,12 @@ type Admin struct {
 	adminPassSum    []byte // we just compare the raw password with constant time; no need for hashing complexity in this MVP
 	adminPass       string
 	onlineThreshold time.Duration
+	loginLimiter    *loginLimiter
+	secureCookie    bool // set the cookie's Secure flag — only when actually serving over TLS
 }
 
 func NewAdmin(store *StoreHolder, user, pass string, onlineThreshold time.Duration) *Admin {
-	return &Admin{store: store, sessions: newSessionStore(), adminUser: user, adminPass: pass, onlineThreshold: onlineThreshold}
+	return &Admin{store: store, sessions: newSessionStore(), adminUser: user, adminPass: pass, onlineThreshold: onlineThreshold, loginLimiter: newLoginLimiter()}
 }
 
 func constEq(a, b string) bool {
@@ -211,14 +213,22 @@ func (a *Admin) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Admin) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if !a.loginLimiter.allow(ip) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		loginTpl.Execute(w, map[string]string{"Error": "muitas tentativas de login — aguarde alguns minutos e tente de novo"})
+		return
+	}
 	r.ParseForm()
 	user := r.FormValue("user")
 	pass := r.FormValue("pass")
 	if !constEq(user, a.adminUser) || !constEq(pass, a.adminPass) {
+		a.loginLimiter.recordFailure(ip)
 		w.WriteHeader(http.StatusUnauthorized)
 		loginTpl.Execute(w, map[string]string{"Error": "usuário ou senha inválidos"})
 		return
 	}
+	a.loginLimiter.reset(ip)
 	tok, err := a.sessions.create()
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -229,6 +239,7 @@ func (a *Admin) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		Value:    tok,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   a.secureCookie,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(sessionTTL),
 	})
@@ -257,7 +268,8 @@ type dashDevice struct {
 }
 
 type dashKey struct {
-	Key       string
+	ID        int64
+	KeyPrefix string
 	Note      string
 	Reusable  bool
 	Used      bool
@@ -307,14 +319,14 @@ var dashTpl = template.Must(template.New("dash").Parse(sidebarDef + `
 <tr><th>Chave</th><th>Nota</th><th>Tipo</th><th>Status</th><th>Criada em</th><th></th></tr>
 {{range .Keys}}
 <tr>
-  <td class="mono">{{.Key}}</td>
+  <td class="mono">{{.KeyPrefix}}…</td>
   <td>{{.Note}}</td>
   <td>{{if .Reusable}}reutilizável{{else}}uso único{{end}}</td>
   <td>{{if .Used}}<span class="pill">usada</span>{{else}}<span class="pill ok">disponível</span>{{end}}</td>
   <td>{{.CreatedAt}}</td>
   <td>
     <form class="inline" method="POST" action="/admin/keys/revoke" onsubmit="return confirm('Revogar esta chave?');">
-      <input type="hidden" name="key" value="{{.Key}}">
+      <input type="hidden" name="id" value="{{.ID}}">
       <button type="submit" class="danger">Revogar</button>
     </form>
   </td>
@@ -420,7 +432,7 @@ func (a *Admin) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, k := range keys {
 		data.Keys = append(data.Keys, dashKey{
-			Key: k.Key, Note: k.Note, Reusable: k.Reusable, Used: k.Used,
+			ID: k.ID, KeyPrefix: k.KeyPrefix, Note: k.Note, Reusable: k.Reusable, Used: k.Used,
 			CreatedAt: time.Unix(k.CreatedAt, 0).Format("2006-01-02 15:04:05"),
 		})
 	}
@@ -444,8 +456,9 @@ func (a *Admin) handleNewKey(w http.ResponseWriter, r *http.Request) {
 
 func (a *Admin) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-	key := r.FormValue("key")
-	if err := a.store.Get().RevokeAuthKey(key); err != nil {
+	var id int64
+	fmt.Sscanf(r.FormValue("id"), "%d", &id)
+	if err := a.store.Get().RevokeAuthKey(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

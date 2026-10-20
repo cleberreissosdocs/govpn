@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,8 +18,19 @@ type ServerClient struct {
 	http    *http.Client
 }
 
-func NewServerClient(baseURL, token string) *ServerClient {
-	return &ServerClient{baseURL: baseURL, token: token, http: &http.Client{Timeout: 10 * time.Second}}
+// NewServerClient builds a client for the coordination server's HTTP
+// API. insecureTLS skips certificate verification — needed when the
+// server is using its auto-generated self-signed cert (the default)
+// instead of a real one; it still encrypts the connection, it just
+// doesn't authenticate the server's identity against a CA, so prefer
+// a real certificate (--tls-cert/--tls-key on the server) over relying
+// on this for anything internet-facing long-term.
+func NewServerClient(baseURL, token string, insecureTLS bool) *ServerClient {
+	c := &http.Client{Timeout: 10 * time.Second}
+	if insecureTLS {
+		c.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
+	return &ServerClient{baseURL: baseURL, token: token, http: c}
 }
 
 func (c *ServerClient) doJSON(method, path string, body interface{}, out interface{}) error {

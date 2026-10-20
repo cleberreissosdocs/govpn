@@ -21,9 +21,82 @@ redes distintas pela internet.
   conseguir conectar direto — precisaria de um relay (fica para v2).
 - Sem ACLs / controle de acesso por usuário — qualquer dispositivo que
   tenha uma auth key entra na malha e enxerga todo mundo (full mesh).
-- Tráfego HTTP do servidor de coordenação por padrão não é TLS (veja seção
-  "Produção" abaixo).
 - IPs são alocados sequencialmente e nunca reciclados nesse MVP.
+
+## Segurança
+
+Fiz uma auditoria de segurança completa no servidor e no cliente.
+Resumo do que foi encontrado e corrigido:
+
+1. **Tudo trafegava em HTTP puro, sem TLS.** Senha de admin, auth keys e
+   tokens de dispositivo cruzavam a rede sem criptografia nenhuma.
+   **Corrigido:** o servidor agora fala HTTPS por padrão — se você não
+   passar `--tls-cert`/`--tls-key` (um certificado de verdade), ele gera
+   e reutiliza um certificado autoassinado automaticamente (guardado ao
+   lado do banco de dados). Os clientes precisam da flag `--insecure`
+   (CLI) ou `insecure_tls: true` (YAML) pra aceitar esse certificado
+   autoassinado — isso ainda criptografa a conexão, só não valida a
+   identidade do servidor contra uma CA, então prefira um certificado de
+   verdade (ex: via reverse proxy com Let's Encrypt) para uso exposto à
+   internet de forma mais séria. Pra desligar o TLS totalmente (ex: atrás
+   de um proxy que já termina TLS), use `--no-tls`.
+
+2. **Bypass de autenticação grave no `/api/register`.** Se um
+   dispositivo com uma `pub_key` já registrada tentasse se registrar de
+   novo, o servidor devolvia o token dele **sem checar a auth key**.
+   Como toda `pub_key` é visível pra outros peers via `/api/peers`,
+   qualquer membro da malha (ou qualquer um que soubesse/adivinhasse uma
+   pubkey) podia roubar o token de outro dispositivo só reenviando um
+   registro com essa pubkey. **Corrigido:** uma auth key válida agora é
+   exigida em toda chamada a `/api/register`, inclusive quando a pubkey
+   já existe (nesse caso o token é rotacionado, mantendo o mesmo IP).
+
+3. **Auth keys e tokens de dispositivo guardados em texto puro no
+   SQLite.** Se o arquivo `.db` (ou um backup dele) vazasse, os
+   segredos já estavam prontos pra uso direto. **Corrigido:** agora só o
+   hash SHA-256 é guardado — a chave/token em si só é mostrado uma vez,
+   na hora da criação. Isso muda um pouco o painel admin: a lista de
+   auth keys mostra só o prefixo (ex: `govpn-AbCd12…`), e revogar passa a
+   ser por ID em vez da chave completa. **Migração automática**: se você
+   já tinha um banco criado pela versão antiga, o servidor detecta o
+   schema legado no primeiro start com o binário novo e migra sozinho
+   (calculando os hashes a partir dos valores antigos, sem perder nenhum
+   dispositivo/chave e sem exigir re-registro dos clientes já
+   conectados — testei esse fluxo de migração de ponta a ponta com dados
+   reais antes de liberar).
+
+4. **Sem proteção contra força bruta no login do painel admin.**
+   **Corrigido:** depois de 8 tentativas erradas da mesma origem em 5
+   minutos, novas tentativas são bloqueadas (`429`) até a janela passar.
+
+5. **Senha de admin só podia ser passada por flag de linha de comando**
+   (`--admin-pass`), visível pra qualquer outro usuário local via
+   `ps aux`/histórico do shell/`docker inspect`. **Corrigido:** agora
+   também aceita `--admin-pass-file /caminho/para/arquivo`, que não
+   aparece em nenhuma lista de processos.
+
+6. **Sem headers de segurança HTTP.** **Corrigido:** toda resposta do
+   servidor agora inclui `X-Content-Type-Options`, `X-Frame-Options`,
+   `Content-Security-Policy`, `Referrer-Policy` e, quando TLS está
+   ativo, `Strict-Transport-Security`. O cookie de sessão do admin
+   também ganhou a flag `Secure` quando servindo por HTTPS.
+
+7. **Imagem Docker roda como root dentro do container** (tradeoff
+   consciente, não uma correção pendente): a alternativa mais segura
+   (`distroless:nonroot`) exige que você mesmo rode um `chown` no
+   diretório `./data` do host antes do primeiro `docker compose up`,
+   porque bind mounts herdam a permissão do host, não da imagem. Se
+   quiser essa configuração mais restrita, troque a tag no `Dockerfile`
+   para `gcr.io/distroless/static-debian12:nonroot` e rode
+   `sudo chown -R 65532:65532 ./data` antes de subir o container.
+
+Tudo isso foi testado de verdade (não só revisado por código): rodei o
+servidor, tentei o ataque de bypass antes e depois da correção,
+confirmei por `grep` binário que os segredos não aparecem mais em texto
+puro no `.db`, testei o rate limiting fazendo 10 tentativas de login
+seguidas, e testei a migração de schema com um banco legado real
+(auth key e device token antigos continuam funcionando depois de
+migrados).
 
 ## Arquitetura
 

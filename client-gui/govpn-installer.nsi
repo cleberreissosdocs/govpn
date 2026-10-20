@@ -85,12 +85,17 @@ Section "govpn (obrigatório)" SecCore
 		FileWrite $0 "# authkey so e usada uma vez, no primeiro registro. Depois disso$\r$\n"
 		FileWrite $0 "# o dispositivo fica identificado pelo estado salvo em$\r$\n"
 		FileWrite $0 "# %USERPROFILE%\.govpn\state.json.$\r$\n"
+		FileWrite $0 "#$\r$\n"
+		FileWrite $0 "# O servidor fala HTTPS por padrao (certificado autoassinado, a$\r$\n"
+		FileWrite $0 "# menos que o administrador tenha configurado um de verdade). Se$\r$\n"
+		FileWrite $0 "# for esse o caso, descomente insecure_tls abaixo.$\r$\n"
 		FileWrite $0 "$\r$\n"
-		FileWrite $0 "server: $\"http://SEU_SERVIDOR:28443$\"$\r$\n"
+		FileWrite $0 "server: $\"https://SEU_SERVIDOR:28443$\"$\r$\n"
 		FileWrite $0 "authkey: $\"SUA_AUTH_KEY$\"$\r$\n"
 		FileWrite $0 "hostname: $\"$\"$\r$\n"
 		FileWrite $0 "iface: $\"govpn0$\"$\r$\n"
 		FileWrite $0 "poll_interval: $\"10s$\"$\r$\n"
+		FileWrite $0 "# insecure_tls: true$\r$\n"
 		FileClose $0
 	${EndIf}
 

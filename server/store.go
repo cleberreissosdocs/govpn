@@ -2,9 +2,11 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -32,7 +34,9 @@ func OpenStore(path string, subnetCIDR string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	schema := `
 	CREATE TABLE IF NOT EXISTS auth_keys (
-		key TEXT PRIMARY KEY,
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		key_hash TEXT UNIQUE NOT NULL,
+		key_prefix TEXT NOT NULL,
 		note TEXT,
 		reusable INTEGER NOT NULL DEFAULT 0,
 		used INTEGER NOT NULL DEFAULT 0,
@@ -41,7 +45,7 @@ func OpenStore(path string, subnetCIDR string) (*Store, error) {
 	CREATE TABLE IF NOT EXISTS devices (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		pub_key TEXT UNIQUE NOT NULL,
-		device_token TEXT UNIQUE NOT NULL,
+		device_token_hash TEXT UNIQUE NOT NULL,
 		hostname TEXT,
 		ip TEXT UNIQUE NOT NULL,
 		endpoint TEXT,
@@ -58,6 +62,9 @@ func OpenStore(path string, subnetCIDR string) (*Store, error) {
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
+	}
+	if err := migrateLegacyPlaintextSecrets(db); err != nil {
+		return nil, fmt.Errorf("migrate legacy schema: %w", err)
 	}
 	_, _, err = net.ParseCIDR(subnetCIDR)
 	if err != nil {
@@ -85,16 +92,35 @@ func randToken(nbytes int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// hashSecret returns the hex SHA-256 of a secret (auth key or device
+// token). These are both high-entropy (192-bit) random values, not
+// human passwords, so a fast hash is fine here — the point isn't to
+// slow down guessing (infeasible either way at that entropy), it's to
+// make the stored value useless by itself if the database file (or a
+// backup of it) ever leaks, same reasoning as hashing API keys/session
+// tokens in any other system.
+func hashSecret(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
 // CreateAuthKey generates a new auth key usable by one (or, if reusable,
-// unlimited) client registrations.
+// unlimited) client registrations. The plaintext key is returned once
+// to the caller (shown in the admin panel / genkey CLI output) and
+// never stored — only its hash and a short, non-secret prefix (for
+// display/identification) are persisted.
 func (s *Store) CreateAuthKey(note string, reusable bool) (string, error) {
 	key, err := randToken(24)
 	if err != nil {
 		return "", err
 	}
 	key = "govpn-" + key
-	_, err = s.db.Exec(`INSERT INTO auth_keys (key, note, reusable, used, created_at) VALUES (?, ?, ?, 0, ?)`,
-		key, note, boolToInt(reusable), time.Now().Unix())
+	prefix := key
+	if len(prefix) > 14 {
+		prefix = prefix[:14]
+	}
+	_, err = s.db.Exec(`INSERT INTO auth_keys (key_hash, key_prefix, note, reusable, used, created_at) VALUES (?, ?, ?, ?, 0, ?)`,
+		hashSecret(key), prefix, note, boolToInt(reusable), time.Now().Unix())
 	if err != nil {
 		return "", err
 	}
@@ -109,7 +135,8 @@ func boolToInt(b bool) int {
 }
 
 func (s *Store) checkAndConsumeAuthKey(key string) error {
-	row := s.db.QueryRow(`SELECT reusable, used FROM auth_keys WHERE key = ?`, key)
+	hash := hashSecret(key)
+	row := s.db.QueryRow(`SELECT reusable, used FROM auth_keys WHERE key_hash = ?`, hash)
 	var reusable, used int
 	if err := row.Scan(&reusable, &used); err != nil {
 		if err == sql.ErrNoRows {
@@ -121,7 +148,7 @@ func (s *Store) checkAndConsumeAuthKey(key string) error {
 		return fmt.Errorf("auth key already used")
 	}
 	if reusable == 0 {
-		_, err := s.db.Exec(`UPDATE auth_keys SET used = 1 WHERE key = ?`, key)
+		_, err := s.db.Exec(`UPDATE auth_keys SET used = 1 WHERE key_hash = ?`, hash)
 		return err
 	}
 	return nil
@@ -170,29 +197,42 @@ func offsetToIP(subnet *net.IPNet, offset int64) (string, error) {
 	return net.IP(ipBytes).String(), nil
 }
 
-// RegisterDevice registers or re-registers a device by its WireGuard pubkey.
-// If the pubkey already has an assigned IP, that IP (and token) is reused.
+// RegisterDevice registers a device by its WireGuard pubkey. A valid
+// auth key is REQUIRED on every call, including when the pubkey is
+// already registered (rotating its token) — there is no "pubkey
+// already known, skip the auth key check" shortcut, because every
+// other peer in the mesh can see any device's pubkey via /api/peers,
+// so skipping auth there would let anyone who knows (or guesses) a
+// victim's pubkey steal its live bearer token.
 func (s *Store) RegisterDevice(authKey, pubKey, hostname string) (token, ip string, err error) {
-	// existing device? just rotate its token.
-	row := s.db.QueryRow(`SELECT device_token, ip FROM devices WHERE pub_key = ?`, pubKey)
-	var existingToken, existingIP string
-	if err := row.Scan(&existingToken, &existingIP); err == nil {
-		return existingToken, existingIP, nil
-	}
-
 	if err := s.checkAndConsumeAuthKey(authKey); err != nil {
 		return "", "", err
 	}
-	ip, err = s.nextIP()
-	if err != nil {
-		return "", "", err
-	}
+
 	token, err = randToken(24)
 	if err != nil {
 		return "", "", err
 	}
-	_, err = s.db.Exec(`INSERT INTO devices (pub_key, device_token, hostname, ip, last_seen) VALUES (?, ?, ?, ?, ?)`,
-		pubKey, token, hostname, ip, time.Now().Unix())
+	tokenHash := hashSecret(token)
+
+	// existing device (same pubkey)? rotate its token, keep its IP.
+	row := s.db.QueryRow(`SELECT ip FROM devices WHERE pub_key = ?`, pubKey)
+	var existingIP string
+	if err := row.Scan(&existingIP); err == nil {
+		_, err = s.db.Exec(`UPDATE devices SET device_token_hash = ?, hostname = ? WHERE pub_key = ?`,
+			tokenHash, hostname, pubKey)
+		if err != nil {
+			return "", "", err
+		}
+		return token, existingIP, nil
+	}
+
+	ip, err = s.nextIP()
+	if err != nil {
+		return "", "", err
+	}
+	_, err = s.db.Exec(`INSERT INTO devices (pub_key, device_token_hash, hostname, ip, last_seen) VALUES (?, ?, ?, ?, ?)`,
+		pubKey, tokenHash, hostname, ip, time.Now().Unix())
 	if err != nil {
 		return "", "", err
 	}
@@ -200,14 +240,14 @@ func (s *Store) RegisterDevice(authKey, pubKey, hostname string) (token, ip stri
 }
 
 func (s *Store) DeviceByToken(token string) (pubKey, ip string, err error) {
-	row := s.db.QueryRow(`SELECT pub_key, ip FROM devices WHERE device_token = ?`, token)
+	row := s.db.QueryRow(`SELECT pub_key, ip FROM devices WHERE device_token_hash = ?`, hashSecret(token))
 	err = row.Scan(&pubKey, &ip)
 	return
 }
 
 func (s *Store) UpdateEndpoint(token, endpoint string) error {
-	_, err := s.db.Exec(`UPDATE devices SET endpoint = ?, last_seen = ? WHERE device_token = ?`,
-		endpoint, time.Now().Unix(), token)
+	_, err := s.db.Exec(`UPDATE devices SET endpoint = ?, last_seen = ? WHERE device_token_hash = ?`,
+		endpoint, time.Now().Unix(), hashSecret(token))
 	return err
 }
 
@@ -262,7 +302,8 @@ func (s *Store) DeleteDevice(pubKey string) error {
 }
 
 type AuthKeyRow struct {
-	Key       string
+	ID        int64
+	KeyPrefix string
 	Note      string
 	Reusable  bool
 	Used      bool
@@ -270,7 +311,7 @@ type AuthKeyRow struct {
 }
 
 func (s *Store) ListAuthKeys() ([]AuthKeyRow, error) {
-	rows, err := s.db.Query(`SELECT key, COALESCE(note,''), reusable, used, created_at FROM auth_keys ORDER BY created_at DESC`)
+	rows, err := s.db.Query(`SELECT id, key_prefix, COALESCE(note,''), reusable, used, created_at FROM auth_keys ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +320,7 @@ func (s *Store) ListAuthKeys() ([]AuthKeyRow, error) {
 	for rows.Next() {
 		var k AuthKeyRow
 		var reusable, used int
-		if err := rows.Scan(&k.Key, &k.Note, &reusable, &used, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.KeyPrefix, &k.Note, &reusable, &used, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		k.Reusable = reusable != 0
@@ -289,10 +330,12 @@ func (s *Store) ListAuthKeys() ([]AuthKeyRow, error) {
 	return out, nil
 }
 
-// RevokeAuthKey deletes an auth key so it can no longer be used to
-// register new devices. It does not affect devices already registered.
-func (s *Store) RevokeAuthKey(key string) error {
-	_, err := s.db.Exec(`DELETE FROM auth_keys WHERE key = ?`, key)
+// RevokeAuthKey deletes an auth key (by its row id — the plaintext key
+// itself is never stored, so it can't be looked up by value) so it can
+// no longer be used to register new devices. It does not affect
+// devices already registered.
+func (s *Store) RevokeAuthKey(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM auth_keys WHERE id = ?`, id)
 	return err
 }
 

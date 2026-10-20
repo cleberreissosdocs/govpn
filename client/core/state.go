@@ -18,6 +18,7 @@ type State struct {
 	AssignedIP  string `json:"assigned_ip"`
 	SubnetCIDR  string `json:"subnet_cidr"`
 	Hostname    string `json:"hostname"`
+	InsecureTLS bool   `json:"insecure_tls"` // skip TLS cert verification (self-signed server cert)
 }
 
 func StateDir() (string, error) {

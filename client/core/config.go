@@ -17,6 +17,7 @@ type FileConfig struct {
 	Hostname     string `yaml:"hostname"`
 	Iface        string `yaml:"iface"`
 	PollInterval string `yaml:"poll_interval"`
+	InsecureTLS  bool   `yaml:"insecure_tls"`
 }
 
 // LoadFileConfig reads and parses a YAML config file. A missing file is

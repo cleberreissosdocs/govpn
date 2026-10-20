@@ -51,10 +51,16 @@ else
 # identificado pela chave salva em $STATE_DIR/state.json — você pode
 # deixar authkey em branco nas próximas vezes (ela só é usada uma vez,
 # no primeiro registro).
+#
+# O servidor fala HTTPS por padrão (com certificado autoassinado, a
+# menos que o administrador tenha configurado um de verdade). Se for
+# esse o caso, descomente insecure_tls abaixo — isso ainda criptografa
+# a conexão, só não valida a identidade do servidor contra uma CA.
 
-server: "http://SEU_SERVIDOR:8443"
+server: "https://SEU_SERVIDOR:8443"
 authkey: "SUA_AUTH_KEY"
 hostname: "$DEFAULT_HOSTNAME"
+# insecure_tls: true
 iface: "govpn0"
 poll_interval: "10s"
 EOF
