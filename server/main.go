@@ -50,6 +50,7 @@ func cmdServe(args []string) {
 	tlsKey := fs.String("tls-key", "", "TLS private key (PEM), paired with --tls-cert")
 	tlsHosts := fs.String("tls-hosts", "", "comma-separated hostnames/IPs the self-signed cert should cover (e.g. your public IP/domain); ignored if --tls-cert is set")
 	noTLS := fs.Bool("no-tls", false, "serve plain HTTP instead of HTTPS (NOT recommended: admin password, auth keys and device tokens would cross the network unencrypted — only use this behind a trusted reverse proxy that terminates TLS itself)")
+	trustProxy := fs.Bool("trust-proxy", false, "trust the X-Forwarded-For header for endpoint-guessing (beacon). ONLY enable this if the server is reachable exclusively through a reverse proxy you control that sets this header itself — otherwise any client could spoof it")
 	fs.Parse(args)
 
 	store, err := OpenStore(*dbPath, *subnet)
@@ -58,7 +59,7 @@ func cmdServe(args []string) {
 	}
 	holder := NewStoreHolder(store, *subnet)
 	holder.StartBackupScheduler()
-	api := &API{store: holder, subnetCIDR: *subnet, relay: newRelayRegistry()}
+	api := &API{store: holder, subnetCIDR: *subnet, relay: newRelayRegistry(), trustProxy: *trustProxy}
 
 	pass := *adminPass
 	if *adminPassFile != "" {

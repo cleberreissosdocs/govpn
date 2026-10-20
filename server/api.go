@@ -13,6 +13,14 @@ type API struct {
 	store      *StoreHolder
 	subnetCIDR string
 	relay      *relayRegistry
+	// trustProxy, when true, makes handleBeacon's endpoint-guessing use
+	// the X-Forwarded-For header instead of the raw TCP connection
+	// address. Only safe when the server is ONLY reachable through a
+	// reverse proxy you control (e.g. nginx terminating TLS) that
+	// overwrites/sets this header itself — if the server were ever
+	// exposed directly, any client could spoof this header and claim
+	// an arbitrary endpoint. Off by default; set via --trust-proxy.
+	trustProxy bool
 }
 
 func bearerToken(r *http.Request) string {
@@ -96,6 +104,20 @@ func (a *API) handleBeacon(w http.ResponseWriter, r *http.Request) {
 	// almost never matches, but with most home routers doing
 	// endpoint-independent mapping this still gives a usable guess).
 	host, _, _ := splitHostPort(r.RemoteAddr)
+	if a.trustProxy {
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			// nginx's $proxy_add_x_forwarded_for appends the
+			// immediate client's IP to any existing chain; with a
+			// single trusted proxy hop the ORIGINAL client is the
+			// first entry.
+			if i := strings.IndexByte(fwd, ','); i >= 0 {
+				fwd = fwd[:i]
+			}
+			if real := strings.TrimSpace(fwd); real != "" {
+				host = real
+			}
+		}
+	}
 	endpoint := host
 	if req.ListenPort > 0 && host != "" {
 		endpoint = host + ":" + itoa(req.ListenPort)

@@ -28,8 +28,20 @@ type RelayBind struct {
 	pubkeyByEp map[string]string        // endpoint.DstToString() -> peer pubkey (base64)
 	epByPubkey map[string]conn.Endpoint // peer pubkey (base64) -> last known endpoint object
 
-	closeOnce sync.Once
-	stopCh    chan struct{}
+	// stopCh is per-"generation": wireguard-go's device internally
+	// calls Close() then Open() again every time the UDP listen port
+	// is (re)applied via IpcSet — even a totally normal first-time
+	// "listen_port=0" at startup goes through one such cycle. Close()
+	// MUST unblock any in-flight ReceiveFunc calls (that's the Bind
+	// interface's contract — device.Close() waits on a WaitGroup for
+	// every receive goroutine to actually return), or the whole
+	// device hangs forever on startup. So each Open() call gets its
+	// own fresh channel, and Close() closes only the CURRENT one —
+	// which unblocks that generation's relayReceiveFunc without
+	// touching the relay connection itself (that's Shutdown()'s job,
+	// called once by WGManager.Close() on the real, final teardown).
+	stopMu sync.Mutex
+	stopCh chan struct{}
 }
 
 var _ conn.Bind = (*RelayBind)(nil)
@@ -40,7 +52,6 @@ func NewRelayBind(inner conn.Bind, relay *RelayClient) *RelayBind {
 		relay:      relay,
 		pubkeyByEp: make(map[string]string),
 		epByPubkey: make(map[string]conn.Endpoint),
-		stopCh:     make(chan struct{}),
 	}
 }
 
@@ -71,15 +82,19 @@ func (b *RelayBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 		return nil, 0, err
 	}
 	if b.relay != nil {
-		fns = append(fns, b.relayReceiveFunc())
+		b.stopMu.Lock()
+		stop := make(chan struct{})
+		b.stopCh = stop
+		b.stopMu.Unlock()
+		fns = append(fns, b.relayReceiveFunc(stop))
 	}
 	return fns, actualPort, nil
 }
 
-func (b *RelayBind) relayReceiveFunc() conn.ReceiveFunc {
+func (b *RelayBind) relayReceiveFunc(stop <-chan struct{}) conn.ReceiveFunc {
 	return func(bufs [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
 		select {
-		case <-b.stopCh:
+		case <-stop:
 			return 0, net.ErrClosed
 		case pkt, ok := <-b.relay.Recv():
 			if !ok {
@@ -103,20 +118,27 @@ func (b *RelayBind) relayReceiveFunc() conn.ReceiveFunc {
 }
 
 func (b *RelayBind) Close() error {
-	// Deliberately does NOT touch stopCh or the RelayClient here — see
-	// Shutdown() for why.
+	// Unblock THIS generation's relayReceiveFunc so wireguard-go's
+	// internal WaitGroup.Wait() for all receive goroutines can
+	// complete — required every time, including the very first
+	// internal rebind at startup. Does NOT touch the relay connection
+	// itself (see the stopCh doc comment above and Shutdown() below).
+	b.stopMu.Lock()
+	if b.stopCh != nil {
+		close(b.stopCh)
+		b.stopCh = nil
+	}
+	b.stopMu.Unlock()
 	return b.inner.Close()
 }
 
-// Shutdown performs the actual, final teardown of the relay path:
-// stops the background relay connection and signals the synthetic
-// relay ReceiveFunc to return. Call this once, from WGManager.Close()
-// — NOT from Close() above, which wireguard-go also calls internally
-// on every UDP listen-port rebind (e.g. applying "listen_port=0" at
-// startup), and which must NOT kill the relay connection or it would
-// never survive past the very first rebind.
+// Shutdown performs the actual, final teardown of the relay
+// connection. Call this once, from WGManager.Close() — it's separate
+// from Close() above (which wireguard-go also calls on every internal
+// rebind, not just real teardown) specifically so the relay's TCP/TLS
+// connection to the coordination server survives rebinds and only
+// goes away when the engine is truly disconnecting.
 func (b *RelayBind) Shutdown() {
-	b.closeOnce.Do(func() { close(b.stopCh) })
 	if b.relay != nil {
 		b.relay.Stop()
 	}
