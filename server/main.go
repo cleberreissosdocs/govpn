@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log"
@@ -112,6 +113,15 @@ func cmdServe(args []string) {
 		Addr:      *addr,
 		Handler:   handler,
 		TLSConfig: tlsConfig(),
+		// Disable HTTP/2: Go's net/http2 implementation doesn't
+		// support http.Hijacker (needed by /api/relay's long-lived
+		// tunnel — see server/relay.go). Without this, ALPN silently
+		// negotiates h2 for any TLS client that offers it (which is
+		// most modern HTTP clients, including Go's own net/http), and
+		// hijacking just hangs forever instead of erroring cleanly.
+		// Everything else (register/peers/beacon/admin panel) works
+		// fine over plain HTTP/1.1, so there's no downside to this.
+		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
 	log.Printf("govpn-server listening on %s (HTTPS, subnet %s, db %s, admin panel at /admin)", *addr, *subnet, *dbPath)
 	log.Fatal(srv.ListenAndServeTLS(certPath, keyPath))
