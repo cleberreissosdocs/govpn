@@ -103,11 +103,23 @@ func (b *RelayBind) relayReceiveFunc() conn.ReceiveFunc {
 }
 
 func (b *RelayBind) Close() error {
+	// Deliberately does NOT touch stopCh or the RelayClient here — see
+	// Shutdown() for why.
+	return b.inner.Close()
+}
+
+// Shutdown performs the actual, final teardown of the relay path:
+// stops the background relay connection and signals the synthetic
+// relay ReceiveFunc to return. Call this once, from WGManager.Close()
+// — NOT from Close() above, which wireguard-go also calls internally
+// on every UDP listen-port rebind (e.g. applying "listen_port=0" at
+// startup), and which must NOT kill the relay connection or it would
+// never survive past the very first rebind.
+func (b *RelayBind) Shutdown() {
 	b.closeOnce.Do(func() { close(b.stopCh) })
 	if b.relay != nil {
 		b.relay.Stop()
 	}
-	return b.inner.Close()
 }
 
 func (b *RelayBind) SetMark(mark uint32) error { return b.inner.SetMark(mark) }

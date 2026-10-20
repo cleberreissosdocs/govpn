@@ -108,5 +108,8 @@ func (m *WGManager) ApplyPeers(peers []common.Peer) error {
 }
 
 func (m *WGManager) Close() {
+	if m.relayBind != nil {
+		m.relayBind.Shutdown()
+	}
 	m.dev.Close()
 }
