@@ -18,6 +18,7 @@ type WGManager struct {
 	dev       *device.Device
 	tunDev    tun.Device
 	IfaceName string
+	relayBind *RelayBind // nil if no relay client was provided
 }
 
 const wgMTU = 1420
@@ -31,8 +32,11 @@ func b64KeyToHex(b64 string) (string, error) {
 }
 
 // NewWGManager creates the TUN device and the WireGuard engine, and sets
-// the local private key + listen port.
-func NewWGManager(ifaceNameHint, privKeyB64 string, listenPort int) (*WGManager, error) {
+// the local private key + listen port. relay may be nil (direct-only
+// mode, pre-relay-feature behavior); when non-nil, every peer's send
+// also goes through the relay as a NAT-traversal fallback (see
+// RelayBind).
+func NewWGManager(ifaceNameHint, privKeyB64 string, listenPort int, relay *RelayClient) (*WGManager, error) {
 	tunDev, err := tun.CreateTUN(ifaceNameHint, wgMTU)
 	if err != nil {
 		return nil, fmt.Errorf("create tun: %w", err)
@@ -43,8 +47,8 @@ func NewWGManager(ifaceNameHint, privKeyB64 string, listenPort int) (*WGManager,
 	}
 
 	logger := device.NewLogger(device.LogLevelError, "govpn: ")
-	bind := conn.NewDefaultBind()
-	dev := device.NewDevice(tunDev, bind, logger)
+	relayBind := NewRelayBind(conn.NewDefaultBind(), relay)
+	dev := device.NewDevice(tunDev, relayBind, logger)
 
 	privHex, err := b64KeyToHex(privKeyB64)
 	if err != nil {
@@ -58,7 +62,7 @@ func NewWGManager(ifaceNameHint, privKeyB64 string, listenPort int) (*WGManager,
 		return nil, fmt.Errorf("device up: %w", err)
 	}
 
-	return &WGManager{dev: dev, tunDev: tunDev, IfaceName: realName}, nil
+	return &WGManager{dev: dev, tunDev: tunDev, IfaceName: realName, relayBind: relayBind}, nil
 }
 
 // ListenPort reads back the UDP port the device actually bound to.
@@ -90,6 +94,13 @@ func (m *WGManager) ApplyPeers(peers []common.Peer) error {
 		b.WriteString("allowed_ip=" + p.IP + "/32\n")
 		if p.Endpoint != "" {
 			b.WriteString("endpoint=" + p.Endpoint + "\n")
+			// Let the relay bind know which pubkey this ip:port
+			// belongs to, so it can ship a copy of outgoing packets
+			// through the relay too, and recognize relay-origin
+			// packets from this peer on the way back in.
+			if m.relayBind != nil {
+				m.relayBind.SetPeerEndpoint(p.PubKey, p.Endpoint)
+			}
 		}
 		b.WriteString("persistent_keepalive_interval=25\n")
 	}

@@ -12,6 +12,7 @@ import (
 type API struct {
 	store      *StoreHolder
 	subnetCIDR string
+	relay      *relayRegistry
 }
 
 func bearerToken(r *http.Request) string {

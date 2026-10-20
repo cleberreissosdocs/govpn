@@ -255,8 +255,12 @@ func (e *Engine) Connect() error {
 		return fmt.Errorf("nenhum perfil configurado")
 	}
 
-	wg, err := NewWGManager(e.IfaceName, st.PrivateKey, 0)
+	relay := NewRelayClient(st.ServerURL, st.DeviceToken, e.InsecureTLS, func(s string) { e.logf("%s", s) })
+	relay.Start()
+
+	wg, err := NewWGManager(e.IfaceName, st.PrivateKey, 0, relay)
 	if err != nil {
+		relay.Stop()
 		return fmt.Errorf("start wireguard device: %w", err)
 	}
 	if err := ConfigureInterface(wg.IfaceName, st.AssignedIP, st.SubnetCIDR); err != nil {

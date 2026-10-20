@@ -57,7 +57,7 @@ func cmdServe(args []string) {
 	}
 	holder := NewStoreHolder(store, *subnet)
 	holder.StartBackupScheduler()
-	api := &API{store: holder, subnetCIDR: *subnet}
+	api := &API{store: holder, subnetCIDR: *subnet, relay: newRelayRegistry()}
 
 	pass := *adminPass
 	if *adminPassFile != "" {
@@ -78,6 +78,7 @@ func cmdServe(args []string) {
 	mux.HandleFunc("/api/register", api.handleRegister)
 	mux.HandleFunc("/api/peers", api.handlePeers)
 	mux.HandleFunc("/api/beacon", api.handleBeacon)
+	mux.HandleFunc("/api/relay", api.handleRelay)
 	admin.RegisterRoutes(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)

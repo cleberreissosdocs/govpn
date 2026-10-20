@@ -12,13 +12,17 @@ redes distintas pela internet.
 
 ## Limitações do MVP (leia antes de usar em produção)
 
-- Sem NAT traversal avançado (sem DERP/relay como o Tailscale real tem).
-  O "beacon" faz uma descoberta de endpoint tipo STUN simplificada (o
-  servidor observa o IP:porta de origem da requisição HTTP e assume que a
-  porta UDP do WireGuard é a mesma informada pelo cliente). Funciona bem
-  quando os peers têm IP público ou estão atrás de NAT cone simples com a
-  porta liberada/mapeada. NAT simétrico ou CGNAT provavelmente não vai
-  conseguir conectar direto — precisaria de um relay (fica para v2).
+- ~~Sem NAT traversal avançado~~ — resolvido com um relay simples
+  embutido no próprio servidor de coordenação (ver seção "Relay"
+  abaixo). Continua sem STUN/hole-punching coordenado — a prioridade é
+  sempre o caminho direto, e o relay é o fallback quando ele falha.
+  O "beacon" ainda faz a descoberta de endpoint tipo STUN simplificada
+  de antes (servidor observa IP:porta de origem da requisição HTTP +
+  porta UDP informada pelo cliente) para tentar o caminho direto
+  primeiro — ele funciona bem com NAT cone simples, e quando falha
+  (NAT simétrico/CGNAT, comum em 4G e alguns provedores residenciais)
+  o relay garante que a conexão aconteça de qualquer forma, só que
+  passando pelo servidor em vez de P2P direto.
 - Sem ACLs / controle de acesso por usuário — qualquer dispositivo que
   tenha uma auth key entra na malha e enxerga todo mundo (full mesh).
 - IPs são alocados sequencialmente e nunca reciclados nesse MVP.
@@ -107,6 +111,46 @@ puro no `.db`, testei o rate limiting fazendo 10 tentativas de login
 seguidas, e testei a migração de schema com um banco legado real
 (auth key e device token antigos continuam funcionando depois de
 migrados).
+
+## Relay
+
+Resolve o caso mais comum de "os dois PCs mostram conectado no painel,
+mas o ping entre eles não passa": os dois estão atrás de NAT (redes
+residenciais, 4G, CGNAT) e nenhum dos dois tem porta encaminhada no
+roteador, então o servidor nunca consegue adivinhar um par IP:porta
+onde um realmente alcance o outro via UDP direto.
+
+**Como funciona:** o próprio `govpn-server` aceita uma conexão HTTP
+"upgradeada" (`/api/relay`, autenticada com o token do dispositivo) e
+mantém ela aberta por tanto tempo quanto o cliente ficar rodando. Cada
+pacote que o WireGuard tentaria mandar direto pro peer é **também**
+enviado em paralelo por esse canal — o servidor repassa pro peer de
+destino (se ele também estiver com o canal de relay aberto), que injeta
+o pacote de volta no seu próprio WireGuard como se tivesse chegado
+direto. O próprio mecanismo de anti-replay do WireGuard descarta
+sozinho a cópia que chegar depois, então não precisa de nenhuma lógica
+de "detectar se o direto falhou" — os dois caminhos correm sempre em
+paralelo, e o que conseguir chegar primeiro "ganha".
+
+**Tradeoff consciente:** todo pacote trafega duas vezes (direto +
+relay) o tempo todo, mesmo quando o caminho direto está funcionando
+perfeitamente. Para uma malha pequena (uso pessoal/equipe pequena) isso
+é bandwidth desprezível no servidor; não tentei otimizar para parar de
+relayar depois que um handshake direto é confirmado (ficaria para uma
+v2, se o uso crescer a ponto de a banda do servidor virar problema).
+
+**O que isso NÃO é:** não é um DERP de verdade (o relay do Tailscale) —
+não tem múltiplas regiões, não tem fallback entre vários relays, e o
+protocolo de enquadramento é uma coisa simples feita pra esse projeto
+(não é WebSocket nem nenhum padrão). Funciona, mas é deliberadamente o
+mínimo necessário para resolver "NAT simétrico nos dois lados".
+
+Testado de ponta a ponta (não só revisado por código): registrei dois
+dispositivos reais contra um servidor de teste, confirmei que uma
+mensagem enviada por um chega no outro através do relay (nos dois
+sentidos), e confirmei que o `RelayBind` (a peça que liga isso no
+wireguard-go) entrega o pacote relayado pro device com o endpoint
+correto configurado para aquele peer.
 
 ## Arquitetura
 
