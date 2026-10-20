@@ -121,6 +121,15 @@ func attemptConnectOnce() error {
 			setWaitingStatus(err)
 			return err
 		}
+	} else {
+		// Device already registered: still re-read config.yml for
+		// insecure_tls on every attempt (upgrade-only — never turns it
+		// back off) so that enabling it after the fact on an existing
+		// install actually takes effect, instead of silently requiring
+		// a full re-register like server/authkey/hostname do.
+		if cfg, err := core.LoadFileConfig(systemConfigPath); err == nil && cfg != nil {
+			eng.UpgradeInsecureTLS(cfg.InsecureTLS)
+		}
 	}
 	if err := eng.Connect(); err != nil {
 		setWaitingStatus(err)

@@ -31,6 +31,39 @@ func NewEngine(ifaceName string, pollInterval time.Duration) *Engine {
 	return &Engine{IfaceName: ifaceName, PollInterval: pollInterval}
 }
 
+// UpgradeInsecureTLS turns insecure TLS verification ON (and persists
+// it to the saved profile, if one is already loaded) — it never turns
+// it off, matching the same "upgrade-only" safety rule as
+// LoadOrRegister. Callers that re-read a config file on every
+// (re)connect attempt (e.g. the Windows tray client, which — unlike
+// the CLI — doesn't re-parse config.yml once a device is already
+// registered) should call this every time with whatever the config
+// currently says, so flipping insecure_tls on in an existing install's
+// config actually takes effect without needing to delete the saved
+// profile and re-register.
+func (e *Engine) UpgradeInsecureTLS(v bool) error {
+	if !v {
+		return nil
+	}
+	e.mu.Lock()
+	st := e.state
+	if st == nil {
+		// Not registered yet: just stage it for the upcoming
+		// LoadOrRegister/RegisterNew call.
+		e.InsecureTLS = true
+		e.mu.Unlock()
+		return nil
+	}
+	if st.InsecureTLS {
+		e.mu.Unlock()
+		return nil
+	}
+	st.InsecureTLS = true
+	e.InsecureTLS = true
+	e.mu.Unlock()
+	return SaveState(st)
+}
+
 func (e *Engine) logf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	if e.OnLog != nil {
