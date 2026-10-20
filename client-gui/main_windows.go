@@ -123,12 +123,13 @@ func attemptConnectOnce() error {
 		}
 	} else {
 		// Device already registered: still re-read config.yml for
-		// insecure_tls on every attempt (upgrade-only — never turns it
-		// back off) so that enabling it after the fact on an existing
-		// install actually takes effect, instead of silently requiring
-		// a full re-register like server/authkey/hostname do.
+		// server URL / insecure_tls on every attempt (server always
+		// wins if different, insecure_tls is upgrade-only — never
+		// turns back off) so that fixing these after the fact on an
+		// existing install actually takes effect, instead of silently
+		// requiring a full re-register.
 		if cfg, err := core.LoadFileConfig(systemConfigPath); err == nil && cfg != nil {
-			eng.UpgradeInsecureTLS(cfg.InsecureTLS)
+			eng.ApplyConfigOverrides(cfg.Server, cfg.InsecureTLS)
 		}
 	}
 	if err := eng.Connect(); err != nil {

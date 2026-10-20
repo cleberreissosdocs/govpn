@@ -34,33 +34,53 @@ func NewEngine(ifaceName string, pollInterval time.Duration) *Engine {
 // UpgradeInsecureTLS turns insecure TLS verification ON (and persists
 // it to the saved profile, if one is already loaded) — it never turns
 // it off, matching the same "upgrade-only" safety rule as
-// LoadOrRegister. Callers that re-read a config file on every
-// (re)connect attempt (e.g. the Windows tray client, which — unlike
-// the CLI — doesn't re-parse config.yml once a device is already
-// registered) should call this every time with whatever the config
-// currently says, so flipping insecure_tls on in an existing install's
-// config actually takes effect without needing to delete the saved
-// profile and re-register.
+// LoadOrRegister. Deprecated in favor of ApplyConfigOverrides, kept
+// for any external caller still using it.
 func (e *Engine) UpgradeInsecureTLS(v bool) error {
-	if !v {
-		return nil
-	}
+	return e.ApplyConfigOverrides("", v)
+}
+
+// ApplyConfigOverrides re-applies a subset of config.yml fields onto an
+// ALREADY-REGISTERED profile, persisting the change. This matters for
+// clients (like the Windows tray app) that only consult config.yml
+// once, at first registration — without this, editing config.yml
+// after the device is already registered (e.g. flipping the server
+// from http:// to https://, or turning insecure_tls on once the
+// operator enables TLS on the server) would silently have no effect
+// until the device deletes its saved state and re-registers from
+// scratch, which is surprising and easy to get stuck on.
+//
+// serverURL, if non-empty and different from the saved one, always
+// wins (same as LoadOrRegister's existing-profile path). insecureTLS
+// only ever turns the setting ON, never off, to avoid a silent
+// security downgrade from a stale/blank config value.
+func (e *Engine) ApplyConfigOverrides(serverURL string, insecureTLS bool) error {
 	e.mu.Lock()
 	st := e.state
 	if st == nil {
-		// Not registered yet: just stage it for the upcoming
-		// LoadOrRegister/RegisterNew call.
-		e.InsecureTLS = true
+		// Not registered yet: just stage insecureTLS for the upcoming
+		// LoadOrRegister/RegisterNew call (server URL is passed
+		// directly to those instead).
+		if insecureTLS {
+			e.InsecureTLS = true
+		}
 		e.mu.Unlock()
 		return nil
 	}
-	if st.InsecureTLS {
-		e.mu.Unlock()
-		return nil
+	changed := false
+	if serverURL != "" && st.ServerURL != serverURL {
+		st.ServerURL = serverURL
+		changed = true
 	}
-	st.InsecureTLS = true
-	e.InsecureTLS = true
+	if insecureTLS && !st.InsecureTLS {
+		st.InsecureTLS = true
+		changed = true
+	}
+	e.InsecureTLS = st.InsecureTLS
 	e.mu.Unlock()
+	if !changed {
+		return nil
+	}
 	return SaveState(st)
 }
 
