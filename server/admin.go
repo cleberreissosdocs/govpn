@@ -95,19 +95,115 @@ func (a *Admin) requireLogin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// --- shared visual style ---
+//
+// Loosely inspired by modern SaaS admin consoles: dark purple/gradient
+// sidebar with nav sections, light main area with rounded white cards
+// in a grid. Pure CSS, no JS framework, no external fonts/icons.
+
+const baseCSS = `
+:root{--bg:#f6f5fa;--text-dark:#1a1523;--text-gray:#6b7280;--border:#e5e3ef;--card-bg:#ffffff;--accent1:#8b5cf6;--accent2:#d946ef}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text-dark);display:flex;min-height:100vh}
+
+.sidebar{width:220px;background:linear-gradient(180deg,#140f1f,#1b1430 65%);color:#fff;display:flex;flex-direction:column;padding:22px 14px;position:fixed;top:0;bottom:0;left:0;overflow-y:auto}
+.sidebar .logo{display:flex;align-items:center;gap:10px;margin-bottom:20px;padding:0 6px}
+.sidebar .logo .mark{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,var(--accent1),var(--accent2));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0}
+.sidebar .logo .name{font-weight:600;font-size:14px;line-height:1.2}
+.sidebar .logo .name small{display:block;font-weight:400;color:#a9a3c0;font-size:11px}
+.navsec{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#786f94;margin:16px 8px 6px}
+.navitem{display:block;padding:9px 10px;border-radius:8px;font-size:13px;color:#cfc9e0;text-decoration:none;margin-bottom:2px}
+.navitem:hover{background:rgba(255,255,255,.06)}
+.navitem.active{background:rgba(139,92,246,.22);color:#fff;font-weight:600}
+.sidebar-foot{margin-top:auto;border-top:1px solid rgba(255,255,255,.08);padding-top:10px}
+.sidebar-foot form{margin:0}
+.sidebar-foot button{background:none;border:none;color:#cfc9e0;font-size:13px;cursor:pointer;padding:9px 10px;width:100%;text-align:left;border-radius:8px}
+.sidebar-foot button:hover{background:rgba(255,255,255,.06);color:#fff}
+
+.main{margin-left:220px;padding:36px 44px;flex:1;max-width:1180px;width:100%}
+.pagehead h1{font-size:28px;margin:0 0 4px;font-weight:700}
+.pagehead p{margin:0 0 20px;color:var(--text-gray);font-size:14px}
+
+.flash{background:#dcfce7;color:#166534;padding:10px 14px;border-radius:8px;margin:0 0 18px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace}
+.err{color:#b91c1c;font-size:13px}
+
+.sectionhead{display:flex;align-items:center;gap:8px;margin:26px 0 12px;font-weight:600;font-size:14px}
+.sectionhead .count{background:#ece9f7;color:#6d28d9;font-size:11px;padding:1px 9px;border-radius:99px;font-weight:600}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.gcard{background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:16px;position:relative;box-shadow:0 1px 2px rgba(20,15,30,.03)}
+.gcard .top{display:flex;justify-content:space-between;align-items:flex-start}
+.gcard .kind{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#9a93ad;font-weight:700}
+.gcard .rm{background:none;border:none;color:#b3adc4;font-size:15px;cursor:pointer;line-height:1;padding:3px 7px;border-radius:6px}
+.gcard .rm:hover{background:#fee2e2;color:#b91c1c}
+.gcard .icon{width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,var(--accent1),var(--accent2));margin:12px 0 10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700}
+.gcard .title{font-weight:600;font-size:14px;margin-bottom:6px;word-break:break-word}
+.gcard .meta{font-size:11px;color:#9a93ad;font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+.status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-gray);margin-top:10px}
+.dot{width:7px;height:7px;border-radius:50%;background:#9ca3af;flex-shrink:0}
+.dot.on{background:#22c55e}
+
+.panel{background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:20px;margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:10px;border-bottom:1px solid var(--border)}
+th{color:#9a93ad;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+td.mono,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#55506a}
+.pill{display:inline-block;padding:3px 9px;border-radius:99px;font-size:11px;background:#f1eff8;color:#6d28d9;font-weight:600}
+.pill.ok{background:#dcfce7;color:#166534}
+
+button{background:linear-gradient(135deg,var(--accent1),var(--accent2));color:#fff;border:none;padding:9px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+button.secondary{background:#fff;color:var(--text-dark);border:1px solid var(--border)}
+button.danger{background:#ef4444}
+form.inline{display:inline}
+
+input[type=text],input[type=password]{padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;color:var(--text-dark)}
+.card{background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:22px;max-width:420px}
+.card label{display:block;margin-bottom:14px;font-size:13px;color:var(--text-gray)}
+.card input[type=text],.card input[type=password]{display:block;width:100%;margin-top:6px}
+.card input[type=checkbox]{width:auto;margin-right:6px;vertical-align:middle}
+
+.newkey-form{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px}
+.newkey-form label{font-size:12px;color:var(--text-gray);display:block}
+
+a{color:#7c3aed;text-decoration:none}
+
+.loginwrap{width:100%;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.logincard{background:#fff;border:1px solid var(--border);border-radius:16px;padding:36px;width:320px;box-shadow:0 10px 30px rgba(20,15,30,.08)}
+.logincard .mark{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--accent1),var(--accent2));margin:0 auto 14px}
+.logincard h1{text-align:center;font-size:20px;margin:0 0 20px}
+`
+
+// sidebarDef defines the {{template "sidebar"}} block shared by every
+// logged-in page. Data passed to it just needs an "Active" field
+// ("devices" or "backup") so the matching nav item gets highlighted.
+const sidebarDef = `{{define "sidebar"}}
+<div class="sidebar">
+  <div class="logo"><div class="mark">GV</div><div class="name">govpn<small>mesh vpn</small></div></div>
+  <div class="navsec">Malha</div>
+  <a class="navitem{{if eq .Active "devices"}} active{{end}}" href="/admin">Dispositivos</a>
+  <a class="navitem{{if eq .Active "backup"}} active{{end}}" href="/admin/backup">Backup</a>
+  <div class="sidebar-foot">
+    <form method="POST" action="/admin/logout"><button type="submit" class="secondary">Sair</button></form>
+  </div>
+</div>
+{{end}}`
+
 // --- login ---
 
 var loginTpl = template.Must(template.New("login").Parse(`<!doctype html>
 <html><head><meta charset="utf-8"><title>govpn admin - login</title>
 <style>` + baseCSS + `</style></head>
-<body><div class="wrap">
-<h1>govpn</h1>
-<form method="POST" action="/admin/login" class="card">
+<body><div class="loginwrap">
+<div class="logincard">
+  <div class="mark"></div>
+  <h1>govpn</h1>
   {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
-  <label>Usuário<input type="text" name="user" autofocus></label>
-  <label>Senha<input type="password" name="pass"></label>
-  <button type="submit">Entrar</button>
-</form>
+  <form method="POST" action="/admin/login">
+    <label>Usuário<input type="text" name="user" autofocus></label>
+    <label>Senha<input type="password" name="pass"></label>
+    <button type="submit" style="width:100%">Entrar</button>
+  </form>
+</div>
 </div></body></html>`))
 
 func (a *Admin) handleLoginPage(w http.ResponseWriter, r *http.Request) {
@@ -148,36 +244,12 @@ func (a *Admin) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // --- dashboard ---
 
-const baseCSS = `
-body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0f1115;color:#e7e9ee;margin:0}
-.wrap{max-width:980px;margin:40px auto;padding:0 20px}
-h1{font-weight:600}
-h2{font-size:16px;color:#9aa4b2;text-transform:uppercase;letter-spacing:.05em;margin-top:40px}
-.card{background:#171a21;border:1px solid #262b36;border-radius:10px;padding:24px;max-width:340px;margin:60px auto}
-.card label{display:block;margin-bottom:14px;font-size:13px;color:#9aa4b2}
-.card input{display:block;width:100%;padding:8px;margin-top:6px;background:#0f1115;border:1px solid #333;border-radius:6px;color:#e7e9ee;box-sizing:border-box}
-button{background:#3b82f6;color:white;border:none;padding:9px 16px;border-radius:6px;cursor:pointer;font-size:14px}
-button.danger{background:#ef4444}
-.err{color:#ef4444;font-size:13px}
-table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #262b36}
-th{color:#9aa4b2;font-weight:500}
-td.mono,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#c7cdd6}
-.topbar{display:flex;justify-content:space-between;align-items:center}
-.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;background:#262b36;color:#9aa4b2}
-.pill.ok{background:#14532d;color:#86efac}
-form.inline{display:inline}
-.newkey-form{display:flex;gap:10px;align-items:flex-end;margin-top:12px;flex-wrap:wrap}
-.newkey-form label{font-size:12px;color:#9aa4b2}
-.newkey-form input[type=text]{padding:7px;background:#0f1115;border:1px solid #333;border-radius:6px;color:#e7e9ee}
-a{color:#60a5fa}
-.flash{background:#14532d;color:#86efac;padding:10px 14px;border-radius:6px;margin:14px 0;font-family:ui-monospace,monospace;font-size:13px}
-`
-
 type dashDevice struct {
 	Hostname    string
+	Initials    string
 	IP          string
 	PubKey      string
+	PubKeyShort string
 	Endpoint    string
 	LastSeen    string
 	LastSeenAgo string
@@ -192,43 +264,40 @@ type dashKey struct {
 	CreatedAt string
 }
 
-var dashTpl = template.Must(template.New("dash").Parse(`<!doctype html>
+var dashTpl = template.Must(template.New("dash").Parse(sidebarDef + `
+<!doctype html>
 <html><head><meta charset="utf-8"><title>govpn admin</title>
 <style>` + baseCSS + `</style></head>
-<body><div class="wrap">
-<div class="topbar">
-  <h1>govpn admin</h1>
-  <div>
-    <a href="/admin/backup"><button type="button">Backup</button></a>
-    <form class="inline" method="POST" action="/admin/logout"><button type="submit">Sair</button></form>
-  </div>
-</div>
+<body>
+{{template "sidebar" .}}
+<div class="main">
+<div class="pagehead"><h1>Dispositivos</h1><p>Máquinas registradas na sua malha govpn.</p></div>
 
 {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
 
-<h2>Dispositivos ({{len .Devices}})</h2>
-<table>
-<tr><th>Hostname</th><th>IP</th><th>Endpoint</th><th>Última atividade</th><th>Chave pública</th><th></th></tr>
+<div class="sectionhead">Dispositivos <span class="count">{{len .Devices}}</span></div>
+<div class="grid">
 {{range .Devices}}
-<tr>
-  <td>{{.Hostname}}</td>
-  <td class="mono">{{.IP}}</td>
-  <td class="mono">{{if .Endpoint}}{{.Endpoint}}{{else}}—{{end}}</td>
-  <td>{{.LastSeenAgo}} <span class="mono" style="color:#6b7280">({{.LastSeen}})</span> {{if .Online}}<span class="pill ok">online</span>{{else}}<span class="pill">offline</span>{{end}}</td>
-  <td class="mono">{{.PubKey}}</td>
-  <td>
+<div class="gcard">
+  <div class="top">
+    <span class="kind">Mesh</span>
     <form class="inline" method="POST" action="/admin/devices/delete" onsubmit="return confirm('Remover {{.Hostname}} da malha?');">
       <input type="hidden" name="pub_key" value="{{.PubKey}}">
-      <button type="submit" class="danger">Remover</button>
+      <button type="submit" class="rm" title="Remover">&#10005;</button>
     </form>
-  </td>
-</tr>
+  </div>
+  <div class="icon">{{.Initials}}</div>
+  <div class="title">{{.Hostname}}</div>
+  <div class="meta">{{.IP}}<br>{{.PubKeyShort}}{{if .Endpoint}}<br>{{.Endpoint}}{{end}}</div>
+  <div class="status"><span class="dot{{if .Online}} on{{end}}"></span>{{if .Online}}Online{{else}}Offline{{end}} &middot; {{.LastSeenAgo}}</div>
+</div>
 {{else}}
-<tr><td colspan="6">Nenhum dispositivo registrado ainda.</td></tr>
+<p style="color:var(--text-gray);font-size:13px">Nenhum dispositivo registrado ainda.</p>
 {{end}}
-</table>
+</div>
 
-<h2>Auth keys</h2>
+<div class="sectionhead">Auth keys <span class="count">{{len .Keys}}</span></div>
+<div class="panel">
 <form class="newkey-form" method="POST" action="/admin/keys/new">
   <div><label>Nota<input type="text" name="note" placeholder="ex: notebook do joão"></label></div>
   <div><label><input type="checkbox" name="reusable" value="1"> reutilizável</label></div>
@@ -254,8 +323,10 @@ var dashTpl = template.Must(template.New("dash").Parse(`<!doctype html>
 <tr><td colspan="6">Nenhuma auth key criada ainda.</td></tr>
 {{end}}
 </table>
+</div>
 
-</div></body></html>`))
+</div>
+</body></html>`))
 
 func fmtLastSeen(ts int64, threshold time.Duration) (abs, ago string, online bool) {
 	if ts == 0 {
@@ -285,6 +356,38 @@ func humanizeAgo(d time.Duration) string {
 	}
 }
 
+func shortKey(k string) string {
+	if len(k) <= 14 {
+		return k
+	}
+	return k[:8] + "…" + k[len(k)-6:]
+}
+
+func initialsOf(hostname string) string {
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return "?"
+	}
+	parts := strings.FieldsFunc(hostname, func(r rune) bool { return r == '-' || r == '_' || r == '.' || r == ' ' })
+	if len(parts) == 0 {
+		parts = []string{hostname}
+	}
+	r := []rune(strings.ToUpper(parts[0]))
+	if len(parts) > 1 {
+		r2 := []rune(strings.ToUpper(parts[1]))
+		if len(r) > 0 && len(r2) > 0 {
+			return string(r[0]) + string(r2[0])
+		}
+	}
+	if len(r) >= 2 {
+		return string(r[:2])
+	}
+	if len(r) == 1 {
+		return string(r[0])
+	}
+	return "?"
+}
+
 func (a *Admin) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	devices, err := a.store.Get().ListAllDevices()
 	if err != nil {
@@ -298,10 +401,11 @@ func (a *Admin) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
+		Active  string
 		Devices []dashDevice
 		Keys    []dashKey
 		Flash   string
-	}{}
+	}{Active: "devices"}
 
 	for _, d := range devices {
 		abs, ago, online := fmtLastSeen(d.LastSeen, a.onlineThreshold)
@@ -310,7 +414,7 @@ func (a *Admin) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			hn = "(sem nome)"
 		}
 		data.Devices = append(data.Devices, dashDevice{
-			Hostname: hn, IP: d.IP, PubKey: d.PubKey, Endpoint: d.Endpoint,
+			Hostname: hn, Initials: initialsOf(hn), IP: d.IP, PubKey: d.PubKey, PubKeyShort: shortKey(d.PubKey), Endpoint: d.Endpoint,
 			LastSeen: abs, LastSeenAgo: ago, Online: online,
 		})
 	}
@@ -360,20 +464,20 @@ func (a *Admin) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
 
 // --- backup page ---
 
-var backupTpl = template.Must(template.New("backup").Parse(`<!doctype html>
+var backupTpl = template.Must(template.New("backup").Parse(sidebarDef + `
+<!doctype html>
 <html><head><meta charset="utf-8"><title>govpn admin - backup</title>
 <style>` + baseCSS + `</style></head>
-<body><div class="wrap">
-<div class="topbar">
-  <h1>Backup e restauração</h1>
-  <a href="/admin"><button type="button">&larr; Voltar</button></a>
-</div>
+<body>
+{{template "sidebar" .}}
+<div class="main">
+<div class="pagehead"><h1>Backup e restauração</h1><p>Cópias de segurança do banco de dados da malha.</p></div>
 
 {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
 {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
 
-<h2>Configuração</h2>
-<form method="POST" action="/admin/backup/settings" class="card" style="max-width:460px;margin:20px 0">
+<div class="sectionhead">Configuração</div>
+<form method="POST" action="/admin/backup/settings" class="card">
   <label>Diretório de backup (caminho no servidor)
     <input type="text" name="dir" value="{{.Dir}}" placeholder="/home/lab/govpn/backups">
   </label>
@@ -387,11 +491,12 @@ var backupTpl = template.Must(template.New("backup").Parse(`<!doctype html>
   <button type="submit">Salvar configuração</button>
 </form>
 
-<form method="POST" action="/admin/backup/now">
-  <button type="submit">Fazer backup agora</button>
+<form method="POST" action="/admin/backup/now" style="margin-top:14px">
+  <button type="submit" class="secondary">Fazer backup agora</button>
 </form>
 
-<h2>Backups disponíveis ({{len .Backups}})</h2>
+<div class="sectionhead">Backups disponíveis <span class="count">{{len .Backups}}</span></div>
+<div class="panel">
 <table>
 <tr><th>Arquivo</th><th>Tamanho</th><th>Criado em</th><th></th></tr>
 {{range .Backups}}
@@ -402,7 +507,7 @@ var backupTpl = template.Must(template.New("backup").Parse(`<!doctype html>
   <td>
     <form class="inline" method="POST" action="/admin/backup/restore" onsubmit="return confirm('Restaurar {{.Name}}? Isso substitui o banco de dados atual e derruba todas as sessões/registros feitos depois deste backup.');">
       <input type="hidden" name="file" value="{{.Name}}">
-      <button type="submit">Restaurar</button>
+      <button type="submit" class="secondary">Restaurar</button>
     </form>
     <form class="inline" method="POST" action="/admin/backup/delete" onsubmit="return confirm('Apagar o backup {{.Name}}? Essa ação não pode ser desfeita.');">
       <input type="hidden" name="file" value="{{.Name}}">
@@ -414,8 +519,10 @@ var backupTpl = template.Must(template.New("backup").Parse(`<!doctype html>
 <tr><td colspan="4">Nenhum backup encontrado{{if .Dir}} em {{.Dir}}{{end}}.</td></tr>
 {{end}}
 </table>
+</div>
 
-</div></body></html>`))
+</div>
+</body></html>`))
 
 type backupFileView struct {
 	Name     string
@@ -444,6 +551,7 @@ func (a *Admin) handleBackupPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := struct {
+		Active          string
 		Dir             string
 		Enabled         bool
 		IntervalMinutes int
@@ -452,7 +560,8 @@ func (a *Admin) handleBackupPage(w http.ResponseWriter, r *http.Request) {
 		Flash           string
 		Error           string
 	}{
-		Dir: settings.Dir, Enabled: settings.Enabled, IntervalMinutes: settings.IntervalMinutes,
+		Active: "backup",
+		Dir:    settings.Dir, Enabled: settings.Enabled, IntervalMinutes: settings.IntervalMinutes,
 		RetentionCount: settings.RetentionCount,
 	}
 	for _, b := range backups {

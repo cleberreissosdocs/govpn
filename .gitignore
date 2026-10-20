@@ -9,3 +9,4 @@ data/
 
 # local test/scratch files
 *.log
+prints/
