@@ -69,44 +69,71 @@ Em vez do `govpn-client.exe` de linha de comando, Windows tem um cliente
 gráfico completo: `govpn-client-gui.exe`, empacotado no instalador
 `govpn-setup.exe` (gerado em `bin/` pelo passo do NSIS acima).
 
+Diferente da versão antiga (que tinha uma janela de configuração que
+travava em alguns ambientes), essa versão **não tem diálogo nenhum** —
+a configuração é só um arquivo YAML, igual ao cliente Linux.
+
 Instalação (no Windows, como Administrador — necessário para criar a
 interface de rede, igual o WireGuard oficial):
 
 1. Rode `govpn-setup.exe`.
-2. Ele instala em `C:\Program Files\govpn`, cria atalho no Menu Iniciar e
-   na Área de Trabalho, registra um desinstalador em
-   Painel de Controle → Programas, e ao final oferece abrir o app.
-3. Na primeira execução, se não houver perfil salvo, abre automaticamente
-   a janela "Perfil" pedindo Servidor + Auth Key + Nome do dispositivo.
+2. Ele instala em `C:\Program Files\govpn`, cria atalhos no Menu Iniciar
+   e na Área de Trabalho, registra um desinstalador em Painel de
+   Controle → Programas, cria `C:\ProgramData\govpn\config.yml` (se
+   ainda não existir) e, ao final, abre esse arquivo no Bloco de Notas.
+3. Edite `C:\ProgramData\govpn\config.yml` com o servidor e a auth key:
+   ```yaml
+   server: "http://SEU_SERVIDOR:28443"
+   authkey: "SUA_AUTH_KEY"
+   hostname: ""
+   iface: "govpn0"
+   poll_interval: "10s"
+   ```
+4. Pronto — não precisa clicar em nada. O cliente já está rodando em
+   segundo plano (instalado como uma Tarefa Agendada que dispara no
+   login) e relê esse arquivo sozinho a cada ~15s até conseguir
+   conectar. Também sobe automaticamente em todo boot/login dali pra
+   frente.
 
-Uma vez rodando, o app fica como um ícone na bandeja do sistema (perto do
-relógio) — azul quando conectado, cinza quando desconectado. Clicar nele
-abre um menu com:
+**Por que Tarefa Agendada e não um atalho normal na pasta Startup:**
+criar a interface de rede WireGuard exige privilégio de Administrador;
+um atalho comum de Startup roda com o token normal (não-elevado) do
+usuário e falha com "Acesso negado". A Tarefa Agendada é criada com
+`/rl highest` (privilégios mais altos), o que dá o token administrativo
+completo sem pedir confirmação do UAC a cada boot — é a mesma técnica
+usada por outros softwares que precisam rodar elevados em background.
 
-- **Status** (linha no topo, só informativa: mostra o IP atribuído quando conectado)
-- **Conectar** / **Desconectar**
-- **Perfil...** — reabre a janela de configuração a qualquer momento, para
-  trocar de servidor/conta (gera um novo par de chaves e registra de novo)
-- **Iniciar com o Windows** — checkbox que liga/desliga o início
-  automático no login (grava em `HKCU\...\Run`, sem precisar de admin
-  para essa parte)
-- **Abrir pasta de configuração** — abre o Explorer em
-  `%USERPROFILE%\.govpn`, onde ficam o perfil (`state.json`) e o log
-  (`gui.log`)
+O ícone na bandeja (perto do relógio — clique na seta "^" se estiver
+escondido) muda de cor:
+
+- 🔴 **Vermelho** — desconectado / aguardando configuração válida / erro
+- 🟢 **Verde** — conectado, túnel ativo
+
+Passe o mouse sobre o ícone pra ver o IP atribuído, ou clique com o
+botão direito para o menu:
+
+- **Status** (linha no topo, só informativa)
+- **Reconectar agora** — força uma nova tentativa imediata (sem esperar os ~15s)
+- **Abrir configuração** — abre `config.yml` no Bloco de Notas
+- **Abrir pasta de logs** — abre `%USERPROFILE%\.govpn` (tem `state.json` e `gui.log`)
 - **Sair** — desconecta e fecha o app
 
-Desinstalar: Painel de Controle → Programas → govpn → Desinstalar (ou o
-atalho "Desinstalar govpn" no Menu Iniciar). Pergunta se quer apagar
-também o perfil salvo.
+A auth key só é usada uma vez, no primeiro registro bem-sucedido —
+depois disso o dispositivo fica identificado pelo `state.json` salvo, e
+você pode deixar o campo em branco (ou até apagar) no `config.yml`.
 
-Atualização: já testei isso num Windows 10 real (não só cross-compile) — o
-cliente de linha de comando (`govpn-client.exe`) cria a interface
-WireGuard de verdade, registra no servidor e troca tráfego real com
-outros peers (testado com ping cruzando o túnel, 0% de perda). O
-cliente gráfico de bandeja (`govpn-client-gui.exe` / `govpn-setup.exe`)
-ainda tem um bug não resolvido nos cliques do menu de bandeja quando
-testado via sessão RDP — se for usar o Windows, prefira o
-`govpn-client.exe` por linha de comando por enquanto.
+Desinstalar: Painel de Controle → Programas → govpn → Desinstalar (ou o
+atalho "Desinstalar govpn" no Menu Iniciar). Remove a Tarefa Agendada e
+pergunta se quer apagar também a configuração/perfil salvo.
+
+Testado de ponta a ponta num Windows 10 real (VM): instalei via
+`govpn-setup.exe`, preenchi o `config.yml` com credenciais reais,
+disparei a Tarefa Agendada e confirmei a interface `govpn0` criada de
+verdade com IP atribuído pelo servidor, o dispositivo aparecendo
+**Online** no painel admin, e o ícone da bandeja mostrando a cor verde
+(capturado via sessão RDP). Também confirmei que, sem a elevação via
+Tarefa Agendada, a criação da interface falha com "Acesso negado" — por
+isso o instalador usa esse mecanismo em vez de um atalho simples.
 
 ## Painel de administração
 
@@ -338,9 +365,8 @@ e confirmei a interface `govpn0` criada, IP atribuído pelo servidor e
 Pra desinstalar: `sudo ./scripts/uninstall-client.sh` (pergunta se quer
 apagar config/estado também, ou só remove o serviço e o binário).
 
-Esse instalador é só para Linux. Windows usa o `govpn-client-gui.exe`
-(bandeja do sistema, com "Iniciar com o Windows" no menu) ou o instalador
-`govpn-setup.exe` — veja a seção acima.
+Esse instalador é só para Linux. Windows usa o `govpn-setup.exe`
+(instalador com tarefa agendada e config.yml) — veja a seção acima.
 
 ## Pacote .deb (Debian/Ubuntu)
 
