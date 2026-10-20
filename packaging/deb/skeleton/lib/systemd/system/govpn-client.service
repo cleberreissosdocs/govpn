@@ -1,5 +1,5 @@
 [Unit]
-Description=govpn client (mesh VPN)
+Description=Cliente VPN em malha govpn
 After=network-online.target
 Wants=network-online.target
 

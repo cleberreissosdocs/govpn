@@ -3,14 +3,14 @@ Version: VERSION_PLACEHOLDER
 Section: net
 Priority: optional
 Architecture: ARCH_PLACEHOLDER
-Maintainer: govpn <noreply@example.com>
+Maintainer: Cleber Reis <cleber.reis@sosdocs.com.br>
 Depends: systemd
-Description: govpn mesh VPN client (WireGuard-based)
- Client agent for the govpn mesh VPN (a Tailscale-style overlay network
- built on WireGuard). Registers with a govpn-server coordination server,
- creates a WireGuard network interface and keeps it in sync with the
- rest of the mesh.
+Description: Cliente VPN em malha govpn (baseado em WireGuard)
+ Agente cliente da VPN em malha govpn (uma rede overlay estilo Tailscale
+ construída sobre WireGuard). Registra-se em um servidor de coordenação
+ govpn-server, cria uma interface de rede WireGuard e mantém ela
+ sincronizada com o restante da malha.
  .
- Configuration lives in /etc/govpn/config.yml after install — edit it
- with your server address and auth key, then:
+ A configuração fica em /etc/govpn/config.yml depois da instalação —
+ edite com o endereço do seu servidor e a auth key, depois rode:
    sudo systemctl start govpn-client
