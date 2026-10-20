@@ -41,6 +41,16 @@ Resumo do que foi encontrado e corrigido:
    internet de forma mais séria. Pra desligar o TLS totalmente (ex: atrás
    de um proxy que já termina TLS), use `--no-tls`.
 
+   **Importante sobre `insecure_tls` num dispositivo que já tem perfil
+   salvo:** o cliente só "liga" essa opção, nunca desliga sozinho — uma
+   vez setada (via `--insecure` ou `insecure_tls: true`), ela fica salva
+   no `state.json`/`.lnk` e continua valendo nos próximos restarts sem
+   precisar repetir a flag. Mas isso significa que, num dispositivo que
+   JÁ tinha um perfil registrado ANTES de você habilitar TLS no
+   servidor, é preciso editar a config e deixar o serviço reiniciar
+   pelo menos uma vez com `insecure_tls: true` presente — só editar e
+   nunca reiniciar o serviço não aplica a mudança.
+
 2. **Bypass de autenticação grave no `/api/register`.** Se um
    dispositivo com uma `pub_key` já registrada tentasse se registrar de
    novo, o servidor devolvia o token dele **sem checar a auth key**.

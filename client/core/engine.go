@@ -46,10 +46,29 @@ func (e *Engine) logf(format string, args ...interface{}) {
 func (e *Engine) LoadOrRegister(server, authKey, hostname string) error {
 	st, err := LoadState()
 	if err == nil {
-		if server != "" {
+		changed := false
+		if server != "" && st.ServerURL != server {
 			st.ServerURL = server // allow overriding the server on an existing profile
+			changed = true
 		}
-		e.InsecureTLS = st.InsecureTLS
+		// e.InsecureTLS at this point reflects whatever the caller just
+		// configured (CLI flag / config.yml). We only ever use that to
+		// turn insecure mode ON for an existing profile (and persist
+		// it) — never silently turn it back OFF just because this run
+		// didn't repeat the flag, which would be a surprising security
+		// downgrade. To go back to strict verification, remove the
+		// saved state and re-register.
+		if e.InsecureTLS && !st.InsecureTLS {
+			st.InsecureTLS = true
+			changed = true
+		} else {
+			e.InsecureTLS = st.InsecureTLS
+		}
+		if changed {
+			if err := SaveState(st); err != nil {
+				return fmt.Errorf("save updated state: %w", err)
+			}
+		}
 		e.mu.Lock()
 		e.state = st
 		e.mu.Unlock()
