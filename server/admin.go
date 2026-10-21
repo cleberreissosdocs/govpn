@@ -229,6 +229,7 @@ const sidebarDef = `{{define "sidebar"}}
   <div class="navsec">Malha</div>
   <a class="navitem{{if eq .Active "devices"}} active{{end}}" href="/admin">Dispositivos</a>
   {{if .IsAdmin}}<a class="navitem{{if eq .Active "backup"}} active{{end}}" href="/admin/backup">Backup</a>{{end}}
+  {{if .IsAdmin}}<a class="navitem{{if eq .Active "permissions"}} active{{end}}" href="/admin/permissions">Permissões</a>{{end}}
   {{if .IsAdmin}}<div class="navsec">Administração</div>
   <a class="navitem{{if eq .Active "users"}} active{{end}}" href="/admin/users">Usuários</a>{{end}}
   <div class="navsec">Conta</div>
@@ -985,6 +986,196 @@ func (a *Admin) handleUserRole(w http.ResponseWriter, r *http.Request, u *UserRo
 	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
 
+// --- permissions / ACL (admin only) ---
+//
+// Model: by default every device can reach every other device (full
+// mesh, exactly like before this feature existed). The moment a
+// device gets ANY rule, it becomes "restricted" and can only see the
+// peers explicitly checked for it. See ListPeers in store.go for how
+// this combines with the other side's own restriction.
+
+var permsTpl = template.Must(template.New("perms").Parse(sidebarDef + `
+<!doctype html>
+<html><head><meta charset="utf-8"><title>govpn admin - permissões</title>
+<style>` + baseCSS + `
+.permbadge{display:inline-block;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600}
+.permbadge.full{background:#dcfce7;color:#166534}
+.permbadge.restricted{background:#fef3c7;color:#92400e}
+.checklist{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0}
+.checklist label{font-size:13px;display:flex;align-items:center;gap:8px}
+</style></head>
+<body>
+{{template "sidebar" .}}
+<div class="main">
+<div class="pagehead"><h1>Permissões</h1><p>Controle quais dispositivos podem se enxergar na malha. Por padrão todos acessam todos — restrinja um dispositivo pra limitar o que ele alcança.</p></div>
+
+{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
+{{if .Editing}}
+<div class="sectionhead">Editar permissões de {{.Editing.Hostname}}</div>
+<div class="panel">
+<form method="POST" action="/admin/permissions/save">
+  <input type="hidden" name="pub_key" value="{{.Editing.PubKey}}">
+  <p style="font-size:13px;color:var(--text-gray);margin-top:0">Marque os dispositivos que <strong>{{.Editing.Hostname}}</strong> pode acessar. Se nenhum for marcado, ele fica isolado (não acessa nem é acessado por ninguém). Pra voltar ao acesso total, use "Remover restrição" abaixo.</p>
+  <div class="checklist">
+  {{range .OtherDevices}}
+    <label><input type="checkbox" name="allowed" value="{{.PubKey}}"{{if .Checked}} checked{{end}}> {{.Hostname}} <span class="mono" style="color:#9a93ad">({{.IP}})</span></label>
+  {{else}}
+    <p style="color:var(--text-gray);font-size:13px">Nenhum outro dispositivo na malha ainda.</p>
+  {{end}}
+  </div>
+  <button type="submit">Salvar permissões</button>
+  <a href="/admin/permissions" class="secondary" style="display:inline-block;margin-left:8px;padding:9px 16px;border-radius:8px;border:1px solid var(--border);font-size:13px;text-decoration:none;color:var(--text-dark)">Cancelar</a>
+</form>
+</div>
+{{end}}
+
+<div class="sectionhead">Dispositivos <span class="count">{{len .Devices}}</span></div>
+<div class="panel">
+<table>
+<tr><th>Dispositivo</th><th>Status</th><th>Pode acessar</th><th></th></tr>
+{{range .Devices}}
+<tr>
+  <td>{{.Hostname}}</td>
+  <td>{{if .Restricted}}<span class="permbadge restricted">restrito</span>{{else}}<span class="permbadge full">acesso total</span>{{end}}</td>
+  <td style="font-size:12px;color:var(--text-gray)">{{if .Restricted}}{{if .AllowedNames}}{{.AllowedNamesJoined}}{{else}}ninguém (isolado){{end}}{{else}}toda a malha{{end}}</td>
+  <td>
+    <a href="/admin/permissions?edit={{.PubKey}}" style="font-size:12px">Editar</a>
+    {{if .Restricted}} &middot; <form class="inline" method="POST" action="/admin/permissions/clear" onsubmit="return confirm('Remover a restrição de {{.Hostname}} e devolver acesso total?');">
+      <input type="hidden" name="pub_key" value="{{.PubKey}}">
+      <button type="submit" class="secondary" style="font-size:11px;padding:4px 8px">Remover restrição</button>
+    </form>{{end}}
+  </td>
+</tr>
+{{else}}
+<tr><td colspan="4">Nenhum dispositivo registrado ainda.</td></tr>
+{{end}}
+</table>
+</div>
+
+</div>
+</body></html>`))
+
+type permDeviceView struct {
+	PubKey             string
+	Hostname           string
+	Restricted         bool
+	AllowedNames       []string
+	AllowedNamesJoined string
+}
+
+type permOtherDeviceView struct {
+	PubKey   string
+	Hostname string
+	IP       string
+	Checked  bool
+}
+
+func (a *Admin) handlePermissionsPage(w http.ResponseWriter, r *http.Request, u *UserRow) {
+	devices, err := a.store.Get().ListAllDevices()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	hostnameOf := map[string]string{}
+	for _, d := range devices {
+		hn := d.Hostname
+		if hn == "" {
+			hn = "(sem nome)"
+		}
+		hostnameOf[d.PubKey] = hn
+	}
+
+	data := struct {
+		Active       string
+		IsAdmin      bool
+		Username     string
+		Devices      []permDeviceView
+		Editing      *permDeviceView
+		OtherDevices []permOtherDeviceView
+		Flash        string
+		Error        string
+	}{Active: "permissions", IsAdmin: true, Username: u.Username}
+
+	for _, d := range devices {
+		dr, err := a.store.Get().GetDeviceRestriction(d.PubKey)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		pv := permDeviceView{PubKey: d.PubKey, Hostname: hostnameOf[d.PubKey], Restricted: dr.Restricted}
+		for _, pk := range dr.AllowedPubKey {
+			if hn, ok := hostnameOf[pk]; ok {
+				pv.AllowedNames = append(pv.AllowedNames, hn)
+			}
+		}
+		for i, n := range pv.AllowedNames {
+			if i > 0 {
+				pv.AllowedNamesJoined += ", "
+			}
+			pv.AllowedNamesJoined += n
+		}
+		data.Devices = append(data.Devices, pv)
+	}
+
+	if editKey := r.URL.Query().Get("edit"); editKey != "" {
+		if hn, ok := hostnameOf[editKey]; ok {
+			dr, err := a.store.Get().GetDeviceRestriction(editKey)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			allowedSet := map[string]bool{}
+			for _, pk := range dr.AllowedPubKey {
+				allowedSet[pk] = true
+			}
+			data.Editing = &permDeviceView{PubKey: editKey, Hostname: hn, Restricted: dr.Restricted}
+			for _, d := range devices {
+				if d.PubKey == editKey {
+					continue
+				}
+				data.OtherDevices = append(data.OtherDevices, permOtherDeviceView{
+					PubKey: d.PubKey, Hostname: hostnameOf[d.PubKey], IP: d.IP, Checked: allowedSet[d.PubKey],
+				})
+			}
+		}
+	}
+
+	if msg := r.URL.Query().Get("flash"); msg != "" {
+		data.Flash = msg
+	}
+	if msg := r.URL.Query().Get("error"); msg != "" {
+		data.Error = msg
+	}
+	permsTpl.Execute(w, data)
+}
+
+func (a *Admin) handlePermissionsSave(w http.ResponseWriter, r *http.Request, u *UserRow) {
+	r.ParseForm()
+	pubKey := r.FormValue("pub_key")
+	if pubKey == "" {
+		http.Redirect(w, r, "/admin/permissions?error="+template.URLQueryEscaper("dispositivo inválido"), http.StatusSeeOther)
+		return
+	}
+	allowed := r.Form["allowed"]
+	if err := a.store.Get().SetDeviceAllowedPeers(pubKey, allowed); err != nil {
+		http.Redirect(w, r, "/admin/permissions?error="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/admin/permissions?flash="+template.URLQueryEscaper("permissões atualizadas"), http.StatusSeeOther)
+}
+
+func (a *Admin) handlePermissionsClear(w http.ResponseWriter, r *http.Request, u *UserRow) {
+	r.ParseForm()
+	pubKey := r.FormValue("pub_key")
+	if err := a.store.Get().ClearDeviceRestriction(pubKey); err != nil {
+		http.Redirect(w, r, "/admin/permissions?error="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/admin/permissions?flash="+template.URLQueryEscaper("restrição removida — acesso total restaurado"), http.StatusSeeOther)
+}
+
 // --- my account (any logged-in user: change own password) ---
 
 var accountTpl = template.Must(template.New("account").Parse(sidebarDef + `
@@ -1079,4 +1270,7 @@ func (a *Admin) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/users/new", a.requireAdmin(a.handleCreateUser))
 	mux.HandleFunc("/admin/users/delete", a.requireAdmin(a.handleDeleteUser))
 	mux.HandleFunc("/admin/users/role", a.requireAdmin(a.handleUserRole))
+	mux.HandleFunc("/admin/permissions", a.requireAdmin(a.handlePermissionsPage))
+	mux.HandleFunc("/admin/permissions/save", a.requireAdmin(a.handlePermissionsSave))
+	mux.HandleFunc("/admin/permissions/clear", a.requireAdmin(a.handlePermissionsClear))
 }

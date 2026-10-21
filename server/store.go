@@ -66,6 +66,13 @@ func OpenStore(path string, subnetCIDR string) (*Store, error) {
 		role TEXT NOT NULL DEFAULT 'user',
 		created_at INTEGER
 	);
+	CREATE TABLE IF NOT EXISTS acl_rules (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		owner_device TEXT NOT NULL,
+		peer_device TEXT NOT NULL,
+		created_at INTEGER,
+		UNIQUE(owner_device, peer_device)
+	);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
@@ -272,11 +279,37 @@ func (s *Store) ListPeers(excludePubKey string) ([]DeviceRow, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []DeviceRow
+	var all []DeviceRow
 	for rows.Next() {
 		var d DeviceRow
 		if err := rows.Scan(&d.PubKey, &d.IP, &d.Endpoint, &d.Hostname, &d.LastSeen); err != nil {
 			return nil, err
+		}
+		all = append(all, d)
+	}
+	// ACL filtering: a device with no acl_rules of its own is
+	// unrestricted (full mesh, same as before this feature existed —
+	// adding permissions is opt-in and never breaks an existing
+	// deployment). Once a device has at least one rule, it can only
+	// see the peers explicitly listed. Because WireGuard requires BOTH
+	// sides to recognize each other's public key for a handshake to
+	// succeed, a peer is only kept if NEITHER side's restriction (if
+	// any) excludes the other.
+	mySet, iAmRestricted, err := s.aclAllowedSet(excludePubKey)
+	if err != nil {
+		return nil, err
+	}
+	var out []DeviceRow
+	for _, d := range all {
+		if iAmRestricted && !mySet[d.PubKey] {
+			continue
+		}
+		theirSet, theyRestricted, err := s.aclAllowedSet(d.PubKey)
+		if err != nil {
+			return nil, err
+		}
+		if theyRestricted && !theirSet[excludePubKey] {
+			continue
 		}
 		out = append(out, d)
 	}
@@ -304,8 +337,10 @@ func (s *Store) ListAllDevices() ([]DeviceRow, error) {
 // DeleteDevice removes a device from the mesh. It stops appearing in peer
 // lists and its own device token stops working immediately.
 func (s *Store) DeleteDevice(pubKey string) error {
-	_, err := s.db.Exec(`DELETE FROM devices WHERE pub_key = ?`, pubKey)
-	return err
+	if _, err := s.db.Exec(`DELETE FROM devices WHERE pub_key = ?`, pubKey); err != nil {
+		return err
+	}
+	return s.RemoveDeviceFromACL(pubKey) // don't leave orphaned ACL rules behind
 }
 
 type AuthKeyRow struct {
