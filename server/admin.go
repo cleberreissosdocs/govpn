@@ -239,8 +239,11 @@ const sidebarDef = `{{define "sidebar"}}
 
 var loginTpl = template.Must(template.New("login").Parse(`<!doctype html>
 <html><head><meta charset="utf-8"><title>govpn admin - login</title>
-<style>` + baseCSS + `</style></head>
-<body><div class="loginwrap">
+<style>` + baseCSS + `
+.loginwrap{position:relative;z-index:1}
+#bgcanvas{position:fixed;inset:0;z-index:0;display:block}
+</style></head>
+<body><canvas id="bgcanvas"></canvas><div class="loginwrap">
 <div class="logincard">
   <div class="mark"></div>
   <h1>govpn</h1>
@@ -251,7 +254,88 @@ var loginTpl = template.Must(template.New("login").Parse(`<!doctype html>
     <button type="submit" style="width:100%">Entrar</button>
   </form>
 </div>
-</div></body></html>`))
+</div>
+<script src="/admin/assets/bg-particles.js"></script>
+</body></html>`))
+
+// bgParticlesJS is served from its own same-origin route instead of
+// inlined in <script> tags — our CSP is "default-src 'self'" with no
+// 'unsafe-inline' for scripts (deliberately, so a reflected-XSS bug
+// anywhere else in the panel can't execute attacker JS), so an inline
+// <script> block would just be silently blocked by the browser.
+const bgParticlesJS = `(function(){
+  var canvas = document.getElementById('bgcanvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var w, h, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var particles = [];
+  var MAX_LINK_DIST = 150;
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function resize(){
+    w = window.innerWidth; h = window.innerHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var count = Math.max(30, Math.min(90, Math.round((w * h) / 18000)));
+    particles = [];
+    for (var i = 0; i < count; i++){
+      particles.push({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 0.25,
+        vy: (Math.random() - 0.5) * 0.25,
+        r: 1 + Math.random() * 1.6
+      });
+    }
+  }
+
+  function step(){
+    ctx.clearRect(0, 0, w, h);
+    for (var i = 0; i < particles.length; i++){
+      var p = particles[i];
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0 || p.x > w) p.vx *= -1;
+      if (p.y < 0 || p.y > h) p.vy *= -1;
+      p.x = Math.max(0, Math.min(w, p.x));
+      p.y = Math.max(0, Math.min(h, p.y));
+    }
+    for (var i = 0; i < particles.length; i++){
+      for (var j = i + 1; j < particles.length; j++){
+        var a = particles[i], b = particles[j];
+        var dx = a.x - b.x, dy = a.y - b.y;
+        var dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < MAX_LINK_DIST){
+          ctx.strokeStyle = 'rgba(139,92,246,' + (0.16 * (1 - dist / MAX_LINK_DIST)) + ')';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+      }
+    }
+    for (var i = 0; i < particles.length; i++){
+      var p = particles[i];
+      ctx.fillStyle = 'rgba(139,92,246,0.45)';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (!reduceMotion) requestAnimationFrame(step);
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+  step();
+})();
+`
+
+func (a *Admin) handleBgParticlesJS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write([]byte(bgParticlesJS))
+}
 
 func (a *Admin) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	loginTpl.Execute(w, map[string]string{})
@@ -941,6 +1025,7 @@ func (a *Admin) RegisterRoutes(mux *http.ServeMux) {
 		a.handleLoginPage(w, r)
 	})
 	mux.HandleFunc("/admin/logout", a.handleLogout)
+	mux.HandleFunc("/admin/assets/bg-particles.js", a.handleBgParticlesJS)
 	mux.HandleFunc("/admin", a.requireLogin(a.handleDashboard))
 	mux.HandleFunc("/admin/account", a.requireLogin(a.handleAccountPage))
 	mux.HandleFunc("/admin/account/password", a.requireLogin(a.handleChangeOwnPassword))
