@@ -272,7 +272,6 @@ const bgParticlesJS = `(function(){
   var MAX_LINK_DIST = 150;
   var MOUSE_RADIUS = 160;
   var mouse = { x: null, y: null, active: false };
-  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function resize(){
     w = window.innerWidth; h = window.innerHeight;
@@ -285,8 +284,8 @@ const bgParticlesJS = `(function(){
       particles.push({
         x: Math.random() * w,
         y: Math.random() * h,
-        vx: (Math.random() - 0.5) * 0.25,
-        vy: (Math.random() - 0.5) * 0.25,
+        vx: (Math.random() - 0.5) * 0.45,
+        vy: (Math.random() - 0.5) * 0.45,
         r: 1 + Math.random() * 1.6
       });
     }
@@ -351,18 +350,12 @@ const bgParticlesJS = `(function(){
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fill();
     }
-    if (!reduceMotion) requestAnimationFrame(step);
+    requestAnimationFrame(step);
   }
 
   window.addEventListener('resize', resize);
   resize();
   step();
-  if (reduceMotion){
-    // No continuous drift animation, but still redraw (with the
-    // mouse-pull effect applied) whenever the cursor moves, so the
-    // interaction stays available without a perpetual rAF loop.
-    window.addEventListener('mousemove', function(){ step(); }, { passive: true });
-  }
 })();
 `
 
