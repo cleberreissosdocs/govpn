@@ -270,6 +270,8 @@ const bgParticlesJS = `(function(){
   var w, h, dpr = Math.min(window.devicePixelRatio || 1, 2);
   var particles = [];
   var MAX_LINK_DIST = 150;
+  var MOUSE_RADIUS = 160;
+  var mouse = { x: null, y: null, active: false };
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function resize(){
@@ -290,6 +292,19 @@ const bgParticlesJS = `(function(){
     }
   }
 
+  function onMove(clientX, clientY){
+    var rect = canvas.getBoundingClientRect();
+    mouse.x = clientX - rect.left;
+    mouse.y = clientY - rect.top;
+    mouse.active = true;
+  }
+  window.addEventListener('mousemove', function(e){ onMove(e.clientX, e.clientY); }, { passive: true });
+  window.addEventListener('touchmove', function(e){
+    if (e.touches && e.touches.length) onMove(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+  window.addEventListener('mouseleave', function(){ mouse.active = false; });
+  document.addEventListener('mouseout', function(e){ if (!e.relatedTarget) mouse.active = false; });
+
   function step(){
     ctx.clearRect(0, 0, w, h);
     for (var i = 0; i < particles.length; i++){
@@ -299,6 +314,20 @@ const bgParticlesJS = `(function(){
       if (p.y < 0 || p.y > h) p.vy *= -1;
       p.x = Math.max(0, Math.min(w, p.x));
       p.y = Math.max(0, Math.min(h, p.y));
+      // Gentle, sustained pull toward the cursor when it's within
+      // range — nudges the particle's POSITION (not just velocity) a
+      // fraction of the way there each frame, so it eases in smoothly
+      // and never snaps or overshoots, and relaxes back to normal
+      // drift as soon as the cursor moves away.
+      if (mouse.active){
+        var dx = mouse.x - p.x, dy = mouse.y - p.y;
+        var dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < MOUSE_RADIUS && dist > 0.01){
+          var force = (1 - dist / MOUSE_RADIUS) * 0.06;
+          p.x += dx * force;
+          p.y += dy * force;
+        }
+      }
     }
     for (var i = 0; i < particles.length; i++){
       for (var j = i + 1; j < particles.length; j++){
@@ -328,6 +357,12 @@ const bgParticlesJS = `(function(){
   window.addEventListener('resize', resize);
   resize();
   step();
+  if (reduceMotion){
+    // No continuous drift animation, but still redraw (with the
+    // mouse-pull effect applied) whenever the cursor moves, so the
+    // interaction stays available without a perpetual rAF loop.
+    window.addEventListener('mousemove', function(){ step(); }, { passive: true });
+  }
 })();
 `
 
