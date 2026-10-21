@@ -209,10 +209,14 @@ input[type=text],input[type=password]{padding:9px 12px;border:1px solid var(--bo
 
 a{color:#7c3aed;text-decoration:none}
 
-.loginwrap{width:100%;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.loginwrap{width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:18px}
 .logincard{background:#fff;border:1px solid var(--border);border-radius:16px;padding:36px;width:320px;box-shadow:0 10px 30px rgba(20,15,30,.08)}
 .logincard .mark{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--accent1),var(--accent2));margin:0 auto 14px}
 .logincard h1{text-align:center;font-size:20px;margin:0 0 20px}
+.logincard form label{display:block;margin-bottom:16px;font-size:13px;color:var(--text-gray)}
+.logincard form input[type=text],.logincard form input[type=password]{display:block;width:100%;margin-top:6px}
+.logincard form button{width:100%;margin-top:8px}
+.devfooter{font-size:12px;color:var(--text-gray);text-align:center}
 `
 
 // sidebarDef defines the {{template "sidebar"}} block shared by every
@@ -231,6 +235,7 @@ const sidebarDef = `{{define "sidebar"}}
   <a class="navitem{{if eq .Active "account"}} active{{end}}" href="/admin/account">Minha conta{{if .Username}} ({{.Username}}){{end}}</a>
   <div class="sidebar-foot">
     <form method="POST" action="/admin/logout"><button type="submit" class="secondary">Sair</button></form>
+    <div class="devfooter" style="margin-top:10px;color:#786f94">Desenvolvido por Cleber Reis</div>
   </div>
 </div>
 {{end}}`
@@ -254,6 +259,7 @@ var loginTpl = template.Must(template.New("login").Parse(`<!doctype html>
     <button type="submit" style="width:100%">Entrar</button>
   </form>
 </div>
+<div class="devfooter">Desenvolvido por Cleber Reis</div>
 </div>
 <script src="/admin/assets/bg-particles.js"></script>
 </body></html>`))
