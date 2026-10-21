@@ -69,11 +69,24 @@ func cmdServe(args []string) {
 		}
 		pass = strings.TrimSpace(string(b))
 	}
+	// EnsureBootstrapAdmin only actually creates an account the very
+	// first time the server runs against this database (when the
+	// admin_users table is still empty) — after that, --admin-user/
+	// --admin-pass are ignored and all accounts are managed through
+	// the "Usuários" page in the admin panel itself.
+	generatedPass := false
 	if pass == "" {
 		pass = randomPassword()
+		generatedPass = true
+	}
+	bootstrapped, err := store.EnsureBootstrapAdmin(*adminUser, pass)
+	if err != nil {
+		log.Fatalf("bootstrap admin user: %v", err)
+	}
+	if bootstrapped && generatedPass {
 		log.Printf("admin panel password auto-generated (save it!): user=%s pass=%s", *adminUser, pass)
 	}
-	admin := NewAdmin(holder, *adminUser, pass, *onlineThreshold)
+	admin := NewAdmin(holder, *onlineThreshold)
 	admin.secureCookie = !*noTLS
 
 	mux := http.NewServeMux()

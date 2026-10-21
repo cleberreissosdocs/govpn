@@ -15,42 +15,52 @@ import (
 
 // --- very small in-memory session store (fine for a single-process admin
 // panel; sessions are lost on server restart, which just forces a re-login) ---
+//
+// Sessions only remember WHICH user (by id) is logged in — role and
+// username are looked up fresh from the database on every request
+// (see requireLogin), so a role change or a user deletion takes effect
+// immediately instead of waiting for the session to expire.
+
+type sessionEntry struct {
+	userID int64
+	expiry time.Time
+}
 
 type sessionStore struct {
 	mu       sync.Mutex
-	sessions map[string]time.Time // cookie value -> expiry
+	sessions map[string]sessionEntry
 }
 
 func newSessionStore() *sessionStore {
-	return &sessionStore{sessions: make(map[string]time.Time)}
+	return &sessionStore{sessions: make(map[string]sessionEntry)}
 }
 
 const sessionTTL = 12 * time.Hour
 const sessionCookieName = "govpn_admin_session"
 
-func (s *sessionStore) create() (string, error) {
+func (s *sessionStore) create(userID int64) (string, error) {
 	tok, err := randToken(32)
 	if err != nil {
 		return "", err
 	}
 	s.mu.Lock()
-	s.sessions[tok] = time.Now().Add(sessionTTL)
+	s.sessions[tok] = sessionEntry{userID: userID, expiry: time.Now().Add(sessionTTL)}
 	s.mu.Unlock()
 	return tok, nil
 }
 
-func (s *sessionStore) valid(tok string) bool {
+func (s *sessionStore) valid(tok string) (int64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	exp, ok := s.sessions[tok]
+	e, ok := s.sessions[tok]
 	if !ok {
-		return false
+		return 0, false
 	}
-	if time.Now().After(exp) {
+	if time.Now().After(e.expiry) {
 		delete(s.sessions, tok)
-		return false
+		return 0, false
 	}
-	return true
+	return e.userID, true
 }
 
 func (s *sessionStore) destroy(tok string) {
@@ -62,16 +72,13 @@ func (s *sessionStore) destroy(tok string) {
 type Admin struct {
 	store           *StoreHolder
 	sessions        *sessionStore
-	adminUser       string
-	adminPassSum    []byte // we just compare the raw password with constant time; no need for hashing complexity in this MVP
-	adminPass       string
 	onlineThreshold time.Duration
 	loginLimiter    *loginLimiter
 	secureCookie    bool // set the cookie's Secure flag — only when actually serving over TLS
 }
 
-func NewAdmin(store *StoreHolder, user, pass string, onlineThreshold time.Duration) *Admin {
-	return &Admin{store: store, sessions: newSessionStore(), adminUser: user, adminPass: pass, onlineThreshold: onlineThreshold, loginLimiter: newLoginLimiter()}
+func NewAdmin(store *StoreHolder, onlineThreshold time.Duration) *Admin {
+	return &Admin{store: store, sessions: newSessionStore(), onlineThreshold: onlineThreshold, loginLimiter: newLoginLimiter()}
 }
 
 func constEq(a, b string) bool {
@@ -86,15 +93,48 @@ func randomPassword() string {
 
 // --- middleware ---
 
-func (a *Admin) requireLogin(next http.HandlerFunc) http.HandlerFunc {
+type ctxKey int
+
+const ctxUserKey ctxKey = 1
+
+// requireLogin validates the session cookie, re-fetches the user from
+// the database (so a role change or account deletion is honored
+// immediately, not just at next login), and stashes it in the request
+// context for handlers/templates to use.
+func (a *Admin) requireLogin(next func(http.ResponseWriter, *http.Request, *UserRow)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookieName)
-		if err != nil || !a.sessions.valid(c.Value) {
+		if err != nil {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
-		next(w, r)
+		userID, ok := a.sessions.valid(c.Value)
+		if !ok {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		u, err := a.store.Get().UserByID(userID)
+		if err != nil || u == nil {
+			a.sessions.destroy(c.Value)
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		next(w, r, u)
 	}
+}
+
+// requireAdmin is requireLogin plus a role check — use for every
+// route a plain "user" account must NOT be able to reach (auth keys,
+// device removal, backups, user management), never relying on the UI
+// alone to hide those actions.
+func (a *Admin) requireAdmin(next func(http.ResponseWriter, *http.Request, *UserRow)) http.HandlerFunc {
+	return a.requireLogin(func(w http.ResponseWriter, r *http.Request, u *UserRow) {
+		if u.Role != RoleAdmin {
+			http.Error(w, "acesso restrito a administradores", http.StatusForbidden)
+			return
+		}
+		next(w, r, u)
+	})
 }
 
 // --- shared visual style ---
@@ -176,14 +216,19 @@ a{color:#7c3aed;text-decoration:none}
 `
 
 // sidebarDef defines the {{template "sidebar"}} block shared by every
-// logged-in page. Data passed to it just needs an "Active" field
-// ("devices" or "backup") so the matching nav item gets highlighted.
+// logged-in page. Data passed to it needs an "Active" field ("devices",
+// "backup", "users" or "account") so the matching nav item gets
+// highlighted, plus "IsAdmin" and "Username" to decide which links show.
 const sidebarDef = `{{define "sidebar"}}
 <div class="sidebar">
   <div class="logo"><div class="mark">GV</div><div class="name">govpn<small>mesh vpn</small></div></div>
   <div class="navsec">Malha</div>
   <a class="navitem{{if eq .Active "devices"}} active{{end}}" href="/admin">Dispositivos</a>
-  <a class="navitem{{if eq .Active "backup"}} active{{end}}" href="/admin/backup">Backup</a>
+  {{if .IsAdmin}}<a class="navitem{{if eq .Active "backup"}} active{{end}}" href="/admin/backup">Backup</a>{{end}}
+  {{if .IsAdmin}}<div class="navsec">Administração</div>
+  <a class="navitem{{if eq .Active "users"}} active{{end}}" href="/admin/users">Usuários</a>{{end}}
+  <div class="navsec">Conta</div>
+  <a class="navitem{{if eq .Active "account"}} active{{end}}" href="/admin/account">Minha conta{{if .Username}} ({{.Username}}){{end}}</a>
   <div class="sidebar-foot">
     <form method="POST" action="/admin/logout"><button type="submit" class="secondary">Sair</button></form>
   </div>
@@ -220,16 +265,25 @@ func (a *Admin) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.ParseForm()
-	user := r.FormValue("user")
+	username := r.FormValue("user")
 	pass := r.FormValue("pass")
-	if !constEq(user, a.adminUser) || !constEq(pass, a.adminPass) {
+	u, err := a.store.Get().UserByUsername(username)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// Constant-time-ish failure path regardless of whether the
+	// username exists, so the error message/timing doesn't leak which
+	// part was wrong — bcrypt.CompareHashAndPassword against a fixed
+	// dummy hash keeps the timing close to the real-user path too.
+	if u == nil || !u.CheckPassword(pass) {
 		a.loginLimiter.recordFailure(ip)
 		w.WriteHeader(http.StatusUnauthorized)
 		loginTpl.Execute(w, map[string]string{"Error": "usuário ou senha inválidos"})
 		return
 	}
 	a.loginLimiter.reset(ip)
-	tok, err := a.sessions.create()
+	tok, err := a.sessions.create(u.ID)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -293,10 +347,10 @@ var dashTpl = template.Must(template.New("dash").Parse(sidebarDef + `
 <div class="gcard">
   <div class="top">
     <span class="kind">Mesh</span>
-    <form class="inline" method="POST" action="/admin/devices/delete" onsubmit="return confirm('Remover {{.Hostname}} da malha?');">
+    {{if $.IsAdmin}}<form class="inline" method="POST" action="/admin/devices/delete" onsubmit="return confirm('Remover {{.Hostname}} da malha?');">
       <input type="hidden" name="pub_key" value="{{.PubKey}}">
       <button type="submit" class="rm" title="Remover">&#10005;</button>
-    </form>
+    </form>{{end}}
   </div>
   <div class="icon">{{.Initials}}</div>
   <div class="title">{{.Hostname}}</div>
@@ -308,6 +362,7 @@ var dashTpl = template.Must(template.New("dash").Parse(sidebarDef + `
 {{end}}
 </div>
 
+{{if .IsAdmin}}
 <div class="sectionhead">Auth keys <span class="count">{{len .Keys}}</span></div>
 <div class="panel">
 <form class="newkey-form" method="POST" action="/admin/keys/new">
@@ -336,6 +391,7 @@ var dashTpl = template.Must(template.New("dash").Parse(sidebarDef + `
 {{end}}
 </table>
 </div>
+{{end}}
 
 </div>
 </body></html>`))
@@ -400,24 +456,22 @@ func initialsOf(hostname string) string {
 	return "?"
 }
 
-func (a *Admin) handleDashboard(w http.ResponseWriter, r *http.Request) {
+func (a *Admin) handleDashboard(w http.ResponseWriter, r *http.Request, u *UserRow) {
 	devices, err := a.store.Get().ListAllDevices()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	keys, err := a.store.Get().ListAuthKeys()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	isAdmin := u.Role == RoleAdmin
 
 	data := struct {
-		Active  string
-		Devices []dashDevice
-		Keys    []dashKey
-		Flash   string
-	}{Active: "devices"}
+		Active   string
+		IsAdmin  bool
+		Username string
+		Devices  []dashDevice
+		Keys     []dashKey
+		Flash    string
+	}{Active: "devices", IsAdmin: isAdmin, Username: u.Username}
 
 	for _, d := range devices {
 		abs, ago, online := fmtLastSeen(d.LastSeen, a.onlineThreshold)
@@ -430,11 +484,22 @@ func (a *Admin) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			LastSeen: abs, LastSeenAgo: ago, Online: online,
 		})
 	}
-	for _, k := range keys {
-		data.Keys = append(data.Keys, dashKey{
-			ID: k.ID, KeyPrefix: k.KeyPrefix, Note: k.Note, Reusable: k.Reusable, Used: k.Used,
-			CreatedAt: time.Unix(k.CreatedAt, 0).Format("2006-01-02 15:04:05"),
-		})
+	// Auth keys are a sensitive security control (they let a device
+	// join the mesh) — only admins get to see/manage them at all, not
+	// just a read-only view, since even "who has a key outstanding"
+	// is operationally sensitive information.
+	if isAdmin {
+		keys, err := a.store.Get().ListAuthKeys()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, k := range keys {
+			data.Keys = append(data.Keys, dashKey{
+				ID: k.ID, KeyPrefix: k.KeyPrefix, Note: k.Note, Reusable: k.Reusable, Used: k.Used,
+				CreatedAt: time.Unix(k.CreatedAt, 0).Format("2006-01-02 15:04:05"),
+			})
+		}
 	}
 	if msg := r.URL.Query().Get("flash"); msg != "" {
 		data.Flash = msg
@@ -442,7 +507,7 @@ func (a *Admin) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	dashTpl.Execute(w, data)
 }
 
-func (a *Admin) handleNewKey(w http.ResponseWriter, r *http.Request) {
+func (a *Admin) handleNewKey(w http.ResponseWriter, r *http.Request, u *UserRow) {
 	r.ParseForm()
 	note := r.FormValue("note")
 	reusable := r.FormValue("reusable") == "1"
@@ -454,7 +519,7 @@ func (a *Admin) handleNewKey(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin?flash="+template.URLQueryEscaper(fmt.Sprintf("nova auth key: %s", key)), http.StatusSeeOther)
 }
 
-func (a *Admin) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
+func (a *Admin) handleRevokeKey(w http.ResponseWriter, r *http.Request, u *UserRow) {
 	r.ParseForm()
 	var id int64
 	fmt.Sscanf(r.FormValue("id"), "%d", &id)
@@ -465,7 +530,7 @@ func (a *Admin) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
-func (a *Admin) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
+func (a *Admin) handleDeleteDevice(w http.ResponseWriter, r *http.Request, u *UserRow) {
 	r.ParseForm()
 	pub := r.FormValue("pub_key")
 	if err := a.store.Get().DeleteDevice(pub); err != nil {
@@ -556,7 +621,7 @@ func humanizeBytes(n int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
-func (a *Admin) handleBackupPage(w http.ResponseWriter, r *http.Request) {
+func (a *Admin) handleBackupPage(w http.ResponseWriter, r *http.Request, u *UserRow) {
 	settings := a.store.GetBackupSettings()
 	backups, err := a.store.ListBackups(settings.Dir)
 	if err != nil {
@@ -565,6 +630,8 @@ func (a *Admin) handleBackupPage(w http.ResponseWriter, r *http.Request) {
 	}
 	data := struct {
 		Active          string
+		IsAdmin         bool
+		Username        string
 		Dir             string
 		Enabled         bool
 		IntervalMinutes int
@@ -573,8 +640,8 @@ func (a *Admin) handleBackupPage(w http.ResponseWriter, r *http.Request) {
 		Flash           string
 		Error           string
 	}{
-		Active: "backup",
-		Dir:    settings.Dir, Enabled: settings.Enabled, IntervalMinutes: settings.IntervalMinutes,
+		Active: "backup", IsAdmin: true, Username: u.Username,
+		Dir: settings.Dir, Enabled: settings.Enabled, IntervalMinutes: settings.IntervalMinutes,
 		RetentionCount: settings.RetentionCount,
 	}
 	for _, b := range backups {
@@ -591,7 +658,7 @@ func (a *Admin) handleBackupPage(w http.ResponseWriter, r *http.Request) {
 	backupTpl.Execute(w, data)
 }
 
-func (a *Admin) handleBackupSettings(w http.ResponseWriter, r *http.Request) {
+func (a *Admin) handleBackupSettings(w http.ResponseWriter, r *http.Request, u *UserRow) {
 	r.ParseForm()
 	dir := strings.TrimSpace(r.FormValue("dir"))
 	enabled := r.FormValue("enabled") == "1"
@@ -612,7 +679,7 @@ func (a *Admin) handleBackupSettings(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/backup?flash="+template.URLQueryEscaper("configuração salva"), http.StatusSeeOther)
 }
 
-func (a *Admin) handleBackupNow(w http.ResponseWriter, r *http.Request) {
+func (a *Admin) handleBackupNow(w http.ResponseWriter, r *http.Request, u *UserRow) {
 	settings := a.store.GetBackupSettings()
 	path, err := a.store.RunBackupNow(settings.Dir)
 	if err != nil {
@@ -622,7 +689,7 @@ func (a *Admin) handleBackupNow(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/backup?flash="+template.URLQueryEscaper("backup criado: "+path), http.StatusSeeOther)
 }
 
-func (a *Admin) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+func (a *Admin) handleBackupRestore(w http.ResponseWriter, r *http.Request, u *UserRow) {
 	r.ParseForm()
 	name := r.FormValue("file")
 	settings := a.store.GetBackupSettings()
@@ -644,7 +711,7 @@ func (a *Admin) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/backup?flash="+template.URLQueryEscaper("banco restaurado a partir de "+name), http.StatusSeeOther)
 }
 
-func (a *Admin) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
+func (a *Admin) handleBackupDelete(w http.ResponseWriter, r *http.Request, u *UserRow) {
 	r.ParseForm()
 	name := r.FormValue("file")
 	settings := a.store.GetBackupSettings()
@@ -653,6 +720,215 @@ func (a *Admin) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/admin/backup?flash="+template.URLQueryEscaper("backup apagado: "+name), http.StatusSeeOther)
+}
+
+// --- users management (admin only) ---
+
+var usersTpl = template.Must(template.New("users").Parse(sidebarDef + `
+<!doctype html>
+<html><head><meta charset="utf-8"><title>govpn admin - usuários</title>
+<style>` + baseCSS + `</style></head>
+<body>
+{{template "sidebar" .}}
+<div class="main">
+<div class="pagehead"><h1>Usuários</h1><p>Quem pode acessar este painel administrativo.</p></div>
+
+{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
+<div class="sectionhead">Novo usuário</div>
+<div class="panel">
+<form method="POST" action="/admin/users/new">
+  <div><label>Usuário<input type="text" name="username" required></label></div>
+  <div><label>Senha<input type="password" name="password" required minlength="8"></label></div>
+  <div><label>Papel
+    <select name="role">
+      <option value="user">Usuário normal (só visualiza a malha)</option>
+      <option value="admin">Administrador (acesso completo)</option>
+    </select>
+  </label></div>
+  <button type="submit">Criar usuário</button>
+</form>
+</div>
+
+<div class="sectionhead">Usuários existentes <span class="count">{{len .Users}}</span></div>
+<div class="panel">
+<table>
+<tr><th>Usuário</th><th>Papel</th><th>Criado em</th><th></th></tr>
+{{range .Users}}
+<tr>
+  <td>{{.Username}}{{if .IsMe}} <span class="pill ok">você</span>{{end}}</td>
+  <td>{{if eq .Role "admin"}}<span class="pill ok">administrador</span>{{else}}<span class="pill">usuário normal</span>{{end}}</td>
+  <td>{{.CreatedAt}}</td>
+  <td>
+    {{if not .IsMe}}
+    <form class="inline" method="POST" action="/admin/users/role">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <input type="hidden" name="role" value="{{if eq .Role "admin"}}user{{else}}admin{{end}}">
+      <button type="submit" class="secondary">{{if eq .Role "admin"}}Rebaixar{{else}}Promover a admin{{end}}</button>
+    </form>
+    <form class="inline" method="POST" action="/admin/users/delete" onsubmit="return confirm('Remover o usuário {{.Username}}?');">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <button type="submit" class="danger">Remover</button>
+    </form>
+    {{end}}
+  </td>
+</tr>
+{{else}}
+<tr><td colspan="4">Nenhum usuário.</td></tr>
+{{end}}
+</table>
+</div>
+
+</div>
+</body></html>`))
+
+type userView struct {
+	ID        int64
+	Username  string
+	Role      string
+	CreatedAt string
+	IsMe      bool
+}
+
+func (a *Admin) handleUsersPage(w http.ResponseWriter, r *http.Request, u *UserRow) {
+	users, err := a.store.Get().ListUsers()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data := struct {
+		Active   string
+		IsAdmin  bool
+		Username string
+		Users    []userView
+		Flash    string
+		Error    string
+	}{Active: "users", IsAdmin: true, Username: u.Username}
+	for _, usr := range users {
+		data.Users = append(data.Users, userView{
+			ID: usr.ID, Username: usr.Username, Role: usr.Role,
+			CreatedAt: time.Unix(usr.CreatedAt, 0).Format("2006-01-02 15:04:05"),
+			IsMe:      usr.ID == u.ID,
+		})
+	}
+	if msg := r.URL.Query().Get("flash"); msg != "" {
+		data.Flash = msg
+	}
+	if msg := r.URL.Query().Get("error"); msg != "" {
+		data.Error = msg
+	}
+	usersTpl.Execute(w, data)
+}
+
+func (a *Admin) handleCreateUser(w http.ResponseWriter, r *http.Request, u *UserRow) {
+	r.ParseForm()
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+	role := r.FormValue("role")
+	if role != RoleAdmin && role != RoleUser {
+		role = RoleUser
+	}
+	if err := a.store.Get().CreateUser(username, password, role); err != nil {
+		http.Redirect(w, r, "/admin/users?error="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/admin/users?flash="+template.URLQueryEscaper("usuário criado: "+username), http.StatusSeeOther)
+}
+
+func (a *Admin) handleDeleteUser(w http.ResponseWriter, r *http.Request, u *UserRow) {
+	r.ParseForm()
+	var id int64
+	fmt.Sscanf(r.FormValue("id"), "%d", &id)
+	if id == u.ID {
+		http.Redirect(w, r, "/admin/users?error="+template.URLQueryEscaper("você não pode remover a si mesmo"), http.StatusSeeOther)
+		return
+	}
+	if err := a.store.Get().DeleteUser(id); err != nil {
+		http.Redirect(w, r, "/admin/users?error="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
+}
+
+func (a *Admin) handleUserRole(w http.ResponseWriter, r *http.Request, u *UserRow) {
+	r.ParseForm()
+	var id int64
+	fmt.Sscanf(r.FormValue("id"), "%d", &id)
+	role := r.FormValue("role")
+	if id == u.ID {
+		http.Redirect(w, r, "/admin/users?error="+template.URLQueryEscaper("você não pode alterar seu próprio papel aqui — use outra conta de admin"), http.StatusSeeOther)
+		return
+	}
+	if err := a.store.Get().SetUserRole(id, role); err != nil {
+		http.Redirect(w, r, "/admin/users?error="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
+}
+
+// --- my account (any logged-in user: change own password) ---
+
+var accountTpl = template.Must(template.New("account").Parse(sidebarDef + `
+<!doctype html>
+<html><head><meta charset="utf-8"><title>govpn admin - minha conta</title>
+<style>` + baseCSS + `</style></head>
+<body>
+{{template "sidebar" .}}
+<div class="main">
+<div class="pagehead"><h1>Minha conta</h1><p>Logado como <strong>{{.Username}}</strong> ({{if .IsAdmin}}administrador{{else}}usuário normal{{end}}).</p></div>
+
+{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
+<div class="sectionhead">Trocar senha</div>
+<div class="panel">
+<form method="POST" action="/admin/account/password">
+  <div><label>Senha atual<input type="password" name="current" required></label></div>
+  <div><label>Nova senha<input type="password" name="new" required minlength="8"></label></div>
+  <div><label>Confirmar nova senha<input type="password" name="confirm" required minlength="8"></label></div>
+  <button type="submit">Salvar nova senha</button>
+</form>
+</div>
+
+</div>
+</body></html>`))
+
+func (a *Admin) handleAccountPage(w http.ResponseWriter, r *http.Request, u *UserRow) {
+	data := struct {
+		Active   string
+		IsAdmin  bool
+		Username string
+		Flash    string
+		Error    string
+	}{Active: "account", IsAdmin: u.Role == RoleAdmin, Username: u.Username}
+	if msg := r.URL.Query().Get("flash"); msg != "" {
+		data.Flash = msg
+	}
+	if msg := r.URL.Query().Get("error"); msg != "" {
+		data.Error = msg
+	}
+	accountTpl.Execute(w, data)
+}
+
+func (a *Admin) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request, u *UserRow) {
+	r.ParseForm()
+	current := r.FormValue("current")
+	newPass := r.FormValue("new")
+	confirm := r.FormValue("confirm")
+	if !u.CheckPassword(current) {
+		http.Redirect(w, r, "/admin/account?error="+template.URLQueryEscaper("senha atual incorreta"), http.StatusSeeOther)
+		return
+	}
+	if newPass != confirm {
+		http.Redirect(w, r, "/admin/account?error="+template.URLQueryEscaper("a confirmação não bate com a nova senha"), http.StatusSeeOther)
+		return
+	}
+	if err := a.store.Get().SetUserPassword(u.ID, newPass); err != nil {
+		http.Redirect(w, r, "/admin/account?error="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/admin/account?flash="+template.URLQueryEscaper("senha alterada com sucesso"), http.StatusSeeOther)
 }
 
 // RegisterRoutes wires every /admin* route onto the given mux.
@@ -666,12 +942,22 @@ func (a *Admin) RegisterRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("/admin/logout", a.handleLogout)
 	mux.HandleFunc("/admin", a.requireLogin(a.handleDashboard))
-	mux.HandleFunc("/admin/backup", a.requireLogin(a.handleBackupPage))
-	mux.HandleFunc("/admin/backup/settings", a.requireLogin(a.handleBackupSettings))
-	mux.HandleFunc("/admin/backup/now", a.requireLogin(a.handleBackupNow))
-	mux.HandleFunc("/admin/backup/restore", a.requireLogin(a.handleBackupRestore))
-	mux.HandleFunc("/admin/backup/delete", a.requireLogin(a.handleBackupDelete))
-	mux.HandleFunc("/admin/keys/new", a.requireLogin(a.handleNewKey))
-	mux.HandleFunc("/admin/keys/revoke", a.requireLogin(a.handleRevokeKey))
-	mux.HandleFunc("/admin/devices/delete", a.requireLogin(a.handleDeleteDevice))
+	mux.HandleFunc("/admin/account", a.requireLogin(a.handleAccountPage))
+	mux.HandleFunc("/admin/account/password", a.requireLogin(a.handleChangeOwnPassword))
+	// Everything below touches a security-sensitive control (auth
+	// keys, device removal, backups, other users' accounts) and is
+	// gated server-side with requireAdmin — a "user" role session
+	// gets a 403 even if it somehow guesses the URL directly.
+	mux.HandleFunc("/admin/backup", a.requireAdmin(a.handleBackupPage))
+	mux.HandleFunc("/admin/backup/settings", a.requireAdmin(a.handleBackupSettings))
+	mux.HandleFunc("/admin/backup/now", a.requireAdmin(a.handleBackupNow))
+	mux.HandleFunc("/admin/backup/restore", a.requireAdmin(a.handleBackupRestore))
+	mux.HandleFunc("/admin/backup/delete", a.requireAdmin(a.handleBackupDelete))
+	mux.HandleFunc("/admin/keys/new", a.requireAdmin(a.handleNewKey))
+	mux.HandleFunc("/admin/keys/revoke", a.requireAdmin(a.handleRevokeKey))
+	mux.HandleFunc("/admin/devices/delete", a.requireAdmin(a.handleDeleteDevice))
+	mux.HandleFunc("/admin/users", a.requireAdmin(a.handleUsersPage))
+	mux.HandleFunc("/admin/users/new", a.requireAdmin(a.handleCreateUser))
+	mux.HandleFunc("/admin/users/delete", a.requireAdmin(a.handleDeleteUser))
+	mux.HandleFunc("/admin/users/role", a.requireAdmin(a.handleUserRole))
 }

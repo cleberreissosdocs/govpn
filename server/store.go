@@ -59,6 +59,13 @@ func OpenStore(path string, subnetCIDR string) (*Store, error) {
 		key TEXT PRIMARY KEY,
 		value TEXT
 	);
+	CREATE TABLE IF NOT EXISTS admin_users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		role TEXT NOT NULL DEFAULT 'user',
+		created_at INTEGER
+	);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
