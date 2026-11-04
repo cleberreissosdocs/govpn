@@ -24,7 +24,7 @@ type Store struct {
 }
 
 func OpenStore(path string, subnetCIDR string) (*Store, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(DELETE)", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
