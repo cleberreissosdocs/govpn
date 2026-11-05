@@ -69,6 +69,20 @@ cat > "$DAEMON_PLIST_PATH" <<PLIST
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- Root's \$HOME (/var/root) is not set in a LaunchDaemon's
+		     minimal environment at all, and os.UserHomeDir() in Go
+		     needs \$HOME on Unix with no fallback. Without this,
+		     core.StateDir() fails, state.json (the device's identity)
+		     never gets saved, and EVERY restart/retry registers as a
+		     brand-new device using the SAME auth key, which is
+		     single-use, so it works once then fails forever with
+		     "auth key already used". Pin it to the shared folder
+		     instead so state persists exactly like config/status. -->
+		<key>GOVPN_STATE_DIR</key>
+		<string>$SHARED_DIR</string>
+	</dict>
 	<key>StandardOutPath</key>
 	<string>$SHARED_DIR/daemon.log</string>
 	<key>StandardErrorPath</key>

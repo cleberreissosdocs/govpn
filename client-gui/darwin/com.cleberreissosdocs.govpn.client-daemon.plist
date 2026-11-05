@@ -27,6 +27,16 @@
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- Required: root's $HOME isn't set in a LaunchDaemon's
+		     environment, and Go's os.UserHomeDir() has no fallback on
+		     Unix, without this, state.json never saves and every
+		     restart burns a fresh single-use auth key ("auth key
+		     already used" after the first attempt). -->
+		<key>GOVPN_STATE_DIR</key>
+		<string>/Library/Application Support/govpn</string>
+	</dict>
 	<key>StandardOutPath</key>
 	<string>/Library/Application Support/govpn/daemon.log</string>
 	<key>StandardErrorPath</key>

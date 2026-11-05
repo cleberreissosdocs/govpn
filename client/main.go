@@ -219,12 +219,33 @@ func cmdDaemon(args []string) {
 	}
 
 	eng := core.NewEngine(core.DefaultIfaceName(), 10*time.Second)
+	var stateMu sync.Mutex
+	lastErr := ""
+	lastIP := ""
+	setState := func(connected bool, ip, errMsg string) {
+		stateMu.Lock()
+		lastIP = ip
+		lastErr = errMsg
+		stateMu.Unlock()
+		writeStatusFile(*statusFilePath, connected, ip, errMsg)
+		if errMsg != "" {
+			log.Printf("erro: %s", errMsg)
+		}
+	}
 	eng.OnStateChange = func(connected bool) {
 		ip := ""
 		if st := eng.State(); st != nil {
 			ip = st.AssignedIP
 		}
-		writeStatusFile(*statusFilePath, connected, ip, "")
+		errMsg := ""
+		if connected {
+			errMsg = "" // a successful (re)connect clears any previous error
+		} else {
+			stateMu.Lock()
+			errMsg = lastErr // keep showing the reason we're down, if any
+			stateMu.Unlock()
+		}
+		setState(connected, ip, errMsg)
 	}
 	eng.TryLoadSaved() // so HasProfile() is accurate from the first attempt(), not just after one successful LoadOrRegister
 
@@ -244,11 +265,11 @@ func cmdDaemon(args []string) {
 	attempt := func() {
 		cfg, err := core.LoadFileConfig(*configPath)
 		if err != nil || cfg == nil {
-			writeStatusFile(*statusFilePath, false, "", "config inválido ou não encontrado: "+*configPath)
+			setState(false, "", "config inválido ou não encontrado: "+*configPath)
 			return
 		}
 		if !eng.HasProfile() && (cfg.Server == "" || cfg.AuthKey == "") {
-			writeStatusFile(*statusFilePath, false, "", "preencha server e authkey em "+*configPath)
+			setState(false, "", "preencha server e authkey em "+*configPath)
 			return
 		}
 		if cfg.Iface != "" {
@@ -262,11 +283,11 @@ func cmdDaemon(args []string) {
 		lastConfigSig = configSig()
 		mu.Unlock()
 		if err := eng.LoadOrRegister(cfg.Server, cfg.AuthKey, cfg.Hostname); err != nil {
-			writeStatusFile(*statusFilePath, false, "", err.Error())
+			setState(false, "", err.Error())
 			return
 		}
 		if err := eng.Connect(); err != nil {
-			writeStatusFile(*statusFilePath, false, "", err.Error())
+			setState(false, "", err.Error())
 		}
 	}
 
@@ -285,16 +306,20 @@ func cmdDaemon(args []string) {
 		}
 	}()
 
-	// Heartbeat, same purpose as in cmdUp.
+	// Heartbeat, same purpose as in cmdUp: refresh updated_at so the
+	// tray app can tell "alive and still in this state" from "process
+	// died silently" — reuses the last known error/IP instead of
+	// wiping them, so a real problem (e.g. "auth key already used")
+	// stays visible in status.json/daemon.log between attempts instead
+	// of disappearing every 5s.
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			ip := ""
-			if st := eng.State(); st != nil {
-				ip = st.AssignedIP
-			}
-			writeStatusFile(*statusFilePath, eng.IsRunning(), ip, "")
+			stateMu.Lock()
+			ip, errMsg := lastIP, lastErr
+			stateMu.Unlock()
+			writeStatusFile(*statusFilePath, eng.IsRunning(), ip, errMsg)
 		}
 	}()
 
