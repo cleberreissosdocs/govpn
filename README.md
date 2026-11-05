@@ -119,16 +119,28 @@ binário avulso).
 
 App de bandeja igual ao do Windows (ícone verde/vermelho, menu com
 Status/Reconectar/Abrir configuração/Abrir pasta de logs/Sair),
-compilado num runner macOS de verdade pelo GitHub Actions (não dá pra
+instalado com um `.pkg` de verdade (duplo clique, assistente
+Continuar/Instalar, igual o `govpn-setup.exe` do Windows), compilado
+num runner macOS de verdade pelo GitHub Actions (não dá pra
 cross-compilar isso do Linux, a lib do ícone de bandeja usa Cocoa):
+[**govpn-client-gui.pkg**](https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-client-gui.pkg)
+
+1. Baixe e dê duplo clique no `.pkg`.
+2. Se aparecer "não é possível verificar o desenvolvedor" (o instalador
+   não é assinado — não temos certificado pago da Apple): clique com o
+   botão direito no arquivo → **Abrir** → **Abrir** de novo na janela
+   de aviso. Ou: Ajustes do Sistema → Privacidade e Segurança → role até
+   o aviso sobre o `.pkg` → **Abrir Mesmo Assim**.
+3. Siga o assistente (Continuar → Instalar), digite sua senha do Mac
+   quando pedir.
+4. Pronto — o ícone já aparece na barra de menu (não precisa reiniciar
+   nem fazer login de novo).
+
+Prefere instalar via Terminal em vez do assistente gráfico (ou seu
+antivírus/MDM bloqueia `.pkg` não assinado)? Tem uma alternativa em
+`.zip` com os mesmos arquivos + um script:
 [**govpn-client-gui-macos.zip**](https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-client-gui-macos.zip)
-
-Instalação:
-
-```bash
-unzip govpn-client-gui-macos.zip
-./install-client-gui-macos.sh
-```
+→ extraia e rode `./install-client-gui-macos.sh`.
 
 Diferença importante em relação ao Windows: no Windows o app inteiro
 roda como Administrador (a Tarefa Agendada sobe assim), então criar a
@@ -416,22 +428,19 @@ que o processo elevado escreve e a bandeja só lê (`gui_status.json`), e
 um pidfile para a bandeja conseguir pedir pra ele parar
 (`gui_child.pid`).
 
-Instalação (gera o `.app` num runner macOS do GitHub Actions — veja
-**Instalação** acima):
+Instalação (gera o `.pkg`/`.app` num runner macOS do GitHub Actions —
+veja **Instalação** acima):
 
-1. Baixe e extraia `govpn-client-gui-macos.zip`.
-2. Rode `./install-client-gui-macos.sh` (copia o app pra
-   `/Applications`, registra um LaunchAgent em
-   `~/Library/LaunchAgents` que sobe o app — sem privilégio — a cada
-   login).
-3. Clique com o botão direito no ícone da bandeja → **Abrir
+1. Baixe `govpn-client-gui.pkg` e dê duplo clique — siga o assistente
+   (Continuar → Instalar, pede sua senha do Mac).
+2. Clique com o botão direito no ícone da bandeja → **Abrir
    configuração**, preencha:
    ```yaml
    server: "http://SEU_SERVIDOR:28443"
    authkey: "SUA_AUTH_KEY"
    ```
    salve e feche o TextEdit.
-4. O app detecta o arquivo salvo e tenta conectar sozinho em
+3. O app detecta o arquivo salvo e tenta conectar sozinho em
    instantes — nesse momento o macOS mostra o diálogo pedindo sua senha
    de administrador (é o passo que cria a interface `utun`). Depois de
    digitar, a interface sobe e o ícone fica verde.
@@ -461,8 +470,11 @@ a cada 15 segundos — ficaria indistinguível de malware tentando
 escalar privilégio. Em vez disso ele só tenta de novo quando você
 clica em "Reconectar agora" ou edita o `config.yml` de novo.
 
-Desinstalar: rode `uninstall-client-gui-macos.sh` (vem no mesmo zip) —
-para o túnel, remove o LaunchAgent e o app, e pergunta se quer apagar
+Desinstalar: o `.pkg` não cria um desinstalador automático (limitação
+do `pkgbuild` sem infraestrutura paga de assinatura) — baixe o
+`govpn-client-gui-macos.zip` (mesmo link da seção **Instalação**) só
+pelo script `uninstall-client-gui-macos.sh` que vem dentro: para o
+túnel, remove o LaunchAgent e o app, e pergunta se quer apagar
 config/estado também.
 
 > Limitação honesta: não tenho um Mac real aqui pra testar — o código

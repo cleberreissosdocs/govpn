@@ -39,8 +39,22 @@ cp client-gui/darwin/install-client-gui-macos.sh dist/
 cp client-gui/darwin/uninstall-client-gui-macos.sh dist/
 chmod +x dist/install-client-gui-macos.sh dist/uninstall-client-gui-macos.sh
 
-echo "==> Zipping"
+echo "==> Building .pkg installer (double-click wizard, like govpn-setup.exe on Windows)"
+PKGROOT=/tmp/govpn-pkgroot
+rm -rf "$PKGROOT"
+mkdir -p "$PKGROOT/Applications"
+cp -R "$APPDIR" "$PKGROOT/Applications/"
+chmod +x client-gui/darwin/pkg-scripts/postinstall
+pkgbuild \
+	--root "$PKGROOT" \
+	--scripts client-gui/darwin/pkg-scripts \
+	--identifier com.cleberreissosdocs.govpn.client-gui \
+	--version 1.0.0 \
+	--install-location / \
+	dist/govpn-client-gui.pkg
+
+echo "==> Zipping (.app + scripts, for people who prefer the manual/Terminal route)"
 ( cd dist && zip -qr govpn-client-gui-macos.zip govpn-client-gui.app com.cleberreissosdocs.govpn.client-gui.plist install-client-gui-macos.sh uninstall-client-gui-macos.sh )
 
-echo "==> Done: dist/govpn-client-gui-macos.zip"
+echo "==> Done: dist/govpn-client-gui-macos.zip and dist/govpn-client-gui.pkg"
 file "$APPDIR/Contents/MacOS/govpn-client-gui"

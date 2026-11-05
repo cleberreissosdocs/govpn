@@ -1,0 +1,64 @@
+#!/bin/bash
+# postinstall — runs as root, right after the installer (Installer.app)
+# copies govpn-client-gui.app into /Applications. Sets up the
+# LaunchAgent for the ACTUAL logged-in user (not root — a pkg
+# postinstall script always runs as root, but the app itself must run
+# as the normal user to show its menu-bar icon, see main_darwin.go).
+
+set -euo pipefail
+
+APP_PATH="/Applications/govpn-client-gui.app"
+PLIST_NAME="com.cleberreissosdocs.govpn.client-gui.plist"
+
+# The user physically logged into the GUI session running the
+# installer (works even though this script itself runs as root).
+CONSOLE_USER="$(stat -f%Su /dev/console)"
+if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; then
+	# Nobody logged in graphically (e.g. remote/unattended install) —
+	# skip autostart setup, the app still works if opened manually.
+	exit 0
+fi
+CONSOLE_UID="$(id -u "$CONSOLE_USER")"
+USER_HOME="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | awk '{print $2}')"
+AGENTS_DIR="$USER_HOME/Library/LaunchAgents"
+PLIST_PATH="$AGENTS_DIR/$PLIST_NAME"
+
+# Gatekeeper quarantine: Installer.app-driven installs usually don't
+# propagate it to the payload, but clear it defensively anyway so the
+# app never shows the "unidentified developer" dialog after install
+# (the .pkg itself still needs the one-time Gatekeeper bypass to open,
+# documented in the README — we have no paid Apple Developer cert to
+# sign/notarize this with).
+xattr -dr com.apple.quarantine "$APP_PATH" 2>/dev/null || true
+
+mkdir -p "$AGENTS_DIR"
+cat > "$PLIST_PATH" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.cleberreissosdocs.govpn.client-gui</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$APP_PATH/Contents/MacOS/govpn-client-gui</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/tmp/govpn-client-gui.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/govpn-client-gui.log</string>
+</dict>
+</plist>
+PLIST
+
+chown "$CONSOLE_USER":staff "$PLIST_PATH"
+chmod 644 "$PLIST_PATH"
+
+# Load it now (so the user doesn't have to log out/in to see the tray
+# icon) in the console user's own launchd session, not root's.
+launchctl asuser "$CONSOLE_UID" launchctl unload "$PLIST_PATH" 2>/dev/null || true
+launchctl asuser "$CONSOLE_UID" launchctl load "$PLIST_PATH" 2>/dev/null || true
+
+exit 0

@@ -32,11 +32,15 @@ jobs:
         if: github.event_name == 'release'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/govpn-client-gui-macos.zip --clobber
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" dist/govpn-client-gui-macos.zip --clobber
+          gh release upload "${{ github.event.release.tag_name }}" dist/govpn-client-gui.pkg --clobber
 
       - name: Upload as workflow artifact
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: govpn-client-gui-macos
-          path: dist/govpn-client-gui-macos.zip
+          path: |
+            dist/govpn-client-gui-macos.zip
+            dist/govpn-client-gui.pkg
