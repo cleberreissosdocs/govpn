@@ -119,11 +119,9 @@ binário avulso).
 
 App de bandeja igual ao do Windows (ícone verde/vermelho, menu com
 Status/Reconectar/Abrir configuração/Abrir pasta de logs/Sair),
-baixado como artefato de build no GitHub Actions (compilado num
-runner macOS de verdade — não dá pra cross-compilar isso daqui do
-Linux, a lib do ícone de bandeja usa Cocoa):
-[**Actions → Build macOS client-gui → último run → artefato
-`govpn-client-gui-macos`**](https://github.com/cleberreissosdocs/govpn/actions/workflows/macos-client-gui.yml)
+compilado num runner macOS de verdade pelo GitHub Actions (não dá pra
+cross-compilar isso do Linux, a lib do ícone de bandeja usa Cocoa):
+[**govpn-client-gui-macos.zip**](https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-client-gui-macos.zip)
 
 Instalação:
 
