@@ -27,6 +27,114 @@ redes distintas pela internet.
   tenha uma auth key entra na malha e enxerga todo mundo (full mesh).
 - IPs são alocados sequencialmente e nunca reciclados nesse MVP.
 
+## Instalação
+
+Tudo que você precisa pra subir o servidor e conectar máquinas na malha,
+sem precisar compilar nada (os binários/instaladores já estão publicados
+em [Releases](https://github.com/cleberreissosdocs/govpn/releases/latest)).
+Quem quiser compilar do zero encontra os comandos na seção **Build a
+partir do código-fonte**, mais abaixo.
+
+### 1. Servidor (Ubuntu, uma vez só)
+
+Mais simples: Docker.
+
+```bash
+git clone https://github.com/cleberreissosdocs/govpn.git && cd govpn
+# edite docker-compose.yml e troque --admin-pass pela sua senha
+docker compose up -d --build
+```
+
+Sobe em `http://SEU_SERVIDOR:28443`, com o banco persistido em
+`./data/govpn.db` (sobrevive a recriação do container) e reinício
+automático se o processo cair.
+
+Gere uma auth key pra cada dispositivo novo (é ela que o cliente usa pra
+se registrar na malha):
+
+```bash
+docker compose exec govpn-server /usr/local/bin/govpn-server genkey --db /data/govpn.db --note "notebook joão"
+```
+
+Acesse o painel em `http://SEU_SERVIDOR:28443/admin` (veja a seção
+**Painel de administração** abaixo). Sem Docker? Veja **Servidor sem
+Docker (systemd)** mais abaixo.
+
+### 2. Cliente Windows
+
+Baixe e rode como Administrador:
+[**govpn-setup.exe**](https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-setup.exe)
+
+O instalador abre `C:\ProgramData\govpn\config.yml` no Bloco de Notas no
+final — preencha e salve:
+
+```yaml
+server: "http://SEU_SERVIDOR:28443"
+authkey: "SUA_AUTH_KEY"
+```
+
+Pronto — não precisa clicar em mais nada. O cliente já fica rodando em
+segundo plano (sobe sozinho a cada login) e relê esse arquivo a cada
+~15s até conectar. Detalhes do ícone de bandeja e desinstalação na
+seção **Cliente gráfico para Windows** mais abaixo.
+
+### 3. Cliente Linux
+
+Mais simples: pacote `.deb` (Debian/Ubuntu), direto do GitHub:
+
+```bash
+curl -fsSL -o govpn-client.deb \
+  https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-client_1.0.0_amd64.deb
+sudo dpkg -i govpn-client.deb
+sudo nano /etc/govpn/config.yml   # preencha server + authkey
+sudo systemctl start govpn-client
+```
+
+Formato do `config.yml`:
+
+```yaml
+server: "http://SEU_SERVIDOR:28443"
+authkey: "SUA_AUTH_KEY"
+hostname: "nome-do-dispositivo"
+iface: "govpn0"
+poll_interval: "10s"
+```
+
+Conferir se está rodando:
+
+```bash
+systemctl status govpn-client        # ativo/inativo
+sudo journalctl -u govpn-client -f   # logs em tempo real
+ip link show govpn0                  # interface criada = conectado
+```
+
+Desinstalar mantendo a config: `sudo apt remove govpn-client`.
+Removendo tudo (config + chaves): `sudo apt purge govpn-client`.
+
+Não é Debian/Ubuntu, ou prefere sem pacote? Veja **Instalação Linux via
+script** mais abaixo (mesmo resultado — serviço systemd — a partir de um
+binário avulso).
+
+### 4. Cliente macOS
+
+Sem instalador publicado ainda — compile localmente (veja **Build a
+partir do código-fonte**) e rode:
+
+```bash
+sudo ./govpn-client-darwin-arm64 up --server http://SEU_SERVIDOR:28443 --authkey SUA_AUTH_KEY --hostname meu-mac
+# Intel: use govpn-client-darwin-amd64 no lugar
+```
+
+A interface criada se chama `utunN` (não `govpn0` — limitação do
+kernel), o cliente lida com isso sozinho. Gatekeeper reclamando do
+binário: `xattr -d com.apple.quarantine ./govpn-client-darwin-arm64`
+antes de rodar.
+
+> Limitação honesta: não tenho um Mac real pra testar — binário só
+> cross-compilado e revisado por código, mesma lib (wireguard-go) que a
+> implementação oficial do WireGuard usa para `utun` no Darwin. Teste
+> antes de confiar cegamente.
+
 ## Segurança
 
 Fiz uma auditoria de segurança completa no servidor e no cliente.
@@ -165,7 +273,11 @@ correto configurado para aquele peer.
   módulo de kernel WireGuard nem do `wg-quick` estarem instalados) e fica
   em loop sincronizando a lista de peers a cada N segundos.
 
-## Build
+## Build a partir do código-fonte
+
+Só é necessário se você quer compilar você mesmo (dev, arquitetura sem
+binário publicado, ou customização). Pra instalar normalmente, use a
+seção **Instalação** lá em cima.
 
 Requer Go >= 1.23 (o `go.mod` já aponta a toolchain certa, o `go build`
 baixa sozinho se necessário).
@@ -312,54 +424,17 @@ Em `/admin/backup` (link "Backup" no topo do painel):
   quiser proteção contra perda do servidor inteiro; o recurso aqui só
   cobre "voltar para um estado anterior", não offsite storage.
 
-## Deploy no servidor (Ubuntu Server)
+## Servidor sem Docker (systemd)
 
-### Opção A: Docker (mais simples)
+Alternativa pra quem não quer Docker — mesmo resultado, direto com o
+binário:
 
-```
-git clone <este repositório> govpn && cd govpn
-# edite docker-compose.yml e troque --admin-pass pela sua senha
-docker compose up -d --build
-```
-
-Isso builda a imagem (multi-stage: compila o Go, resultado final é uma
-imagem `distroless` mínima, só o binário + libs do sistema, sem shell/
-apt/etc — poucos MB e superfície de ataque pequena) e sobe o container
-com:
-
-- Porta `28443` publicada no host (diferente da `8443` padrão do binário
-  standalone, de propósito — evita conflito comum com outras apps
-  open-source que costumam usar 8443/8080/9000/etc)
-- Banco de dados persistido em `./data/govpn.db` no host (sobrevive a
-  `docker compose down` / recriação do container)
-- Reinício automático (`restart: unless-stopped`)
-
-Gerar uma auth key com o servidor rodando em container:
-
-```
-docker compose exec govpn-server /usr/local/bin/govpn-server genkey --db /data/govpn.db --note "notebook joão"
-```
-
-Ver logs:
-
-```
-docker compose logs -f
-```
-
-Se você quiser configurar backup automático pelo painel (`/admin/backup`),
-aponte o diretório de backup para algo DENTRO de `/data` (ex:
-`/data/backups`) — assim ele também fica no volume persistido no host,
-e não se perde se o container for recriado.
-
-### Opção B: binário direto (systemd)
-
-```
+```bash
 sudo mkdir -p /opt/govpn
 sudo cp bin/govpn-server /opt/govpn/
-sudo /opt/govpn/govpn-server serve --db /opt/govpn/govpn.db --addr :8443
 ```
 
-Para rodar como serviço, crie `/etc/systemd/system/govpn-server.service`:
+Crie `/etc/systemd/system/govpn-server.service`:
 
 ```
 [Unit]
@@ -375,16 +450,15 @@ User=root
 WantedBy=multi-user.target
 ```
 
-```
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now govpn-server
 sudo ufw allow 8443/tcp     # libere a porta da API
 ```
 
-Gere uma auth key para cada novo dispositivo (ou uma reutilizável para um
-grupo de máquinas confiáveis):
+Gerar auth key:
 
-```
+```bash
 /opt/govpn/govpn-server genkey --db /opt/govpn/govpn.db --note "notebook joão"
 ```
 
@@ -394,133 +468,24 @@ Por padrão o `serve` sobe HTTP puro. Para expor pela internet, coloque
 atrás de um reverse proxy com TLS (nginx/caddy) ou rode com um proxy
 `stunnel`, e aponte os clientes para `--server https://seu-dominio:443`.
 
-## Uso no cliente
+## Instalação Linux via script (sem pacote .deb)
 
-Linux (como root, para poder criar a interface):
+Alternativa ao `.deb` da seção **Instalação** — útil se sua distro não é
+Debian/Ubuntu, ou se prefere um binário avulso em vez de pacote. Mesmo
+resultado final (serviço systemd), a partir de `scripts/install-client.sh`:
 
-```
-sudo ./govpn-client up --server http://IP_DO_SERVIDOR:8443 --authkey SUA_AUTH_KEY --hostname meu-notebook
-```
-
-Windows (PowerShell como Administrador):
-
-```
-.\govpn-client.exe up --server http://IP_DO_SERVIDOR:8443 --authkey SUA_AUTH_KEY --hostname meu-pc
-```
-
-macOS (como root — use o binário certo pra sua arquitetura, Intel ou
-Apple Silicon; testado em Monterey 12.7.6 via cross-compile, veja a
-ressalva logo abaixo):
-
-```
-sudo ./govpn-client-darwin-arm64 up --server http://IP_DO_SERVIDOR:8443 --authkey SUA_AUTH_KEY --hostname meu-mac
-# Intel: use govpn-client-darwin-amd64 no lugar
-```
-
-No macOS a interface criada não se chama `govpn0` — o kernel só aceita
-nomes com prefixo `utun` e escolhe o número sozinho (ex: `utun5`). O
-cliente já lida com isso automaticamente (não precisa passar `--iface`).
-Se o Gatekeeper reclamar que o binário "é de um desenvolvedor não
-identificado" (comum em arquivo baixado pela internet, não deve
-acontecer se você copiou via `scp`/USB/git), rode
-`xattr -d com.apple.quarantine ./govpn-client-darwin-arm64` antes.
-
-Limitação honesta: não tenho uma máquina com macOS real aqui pra testar
-— o `govpn-client.exe`/binário Linux eu validei rodando de verdade (veja
-o histórico do projeto), mas o binário macOS só foi cross-compilado e
-revisado por código, usando exatamente a mesma biblioteca (wireguard-go)
-que a implementação oficial usa para `utun` no Darwin. Teste num Mac de
-verdade antes de confiar cegamente, e me avise se achar algo quebrado.
-
-Na primeira execução ele registra o dispositivo e salva o estado em
-`~/.govpn/state.json` (Linux) ou `%USERPROFILE%\.govpn\state.json`
-(Windows). Nas próximas execuções não precisa mais passar `--authkey`:
-
-```
-sudo ./govpn-client up
-```
-
-Ver status local:
-
-```
-./govpn-client status
-```
-
-Depois que dois ou mais clientes estiverem rodando, cada um enxerga os
-IPs dos outros na faixa 100.64.x.x e consegue `ping` diretamente.
-
-## Instalação do cliente Linux como serviço do sistema
-
-Pra não precisar deixar um terminal aberto rodando `govpn-client up`,
-tem um instalador em `scripts/install-client.sh` que:
-
-- Copia o binário pra `/opt/govpn/govpn-client`
-- Cria um arquivo de configuração editável em `/etc/govpn/config.yml`
-  (permissão `600`, só root lê — protege a auth key)
-- Cria e habilita um serviço systemd (`govpn-client.service`) que sobe
-  sozinho no boot e reinicia automaticamente se cair
-
-```
+```bash
 sudo ./scripts/install-client.sh                      # usa ./govpn-client ao lado do script
 sudo ./scripts/install-client.sh /caminho/pro/binario  # ou aponta o binário explicitamente
 
 # edite /etc/govpn/config.yml com o servidor e a auth key, depois:
 sudo systemctl start govpn-client
-sudo journalctl -u govpn-client -f    # acompanhar os logs
 ```
-
-Formato do `config.yml`:
-
-```yaml
-server: "http://SEU_SERVIDOR:8443"
-authkey: "SUA_AUTH_KEY"
-hostname: "nome-do-dispositivo"
-iface: "govpn0"
-poll_interval: "10s"
-```
-
-A auth key só é usada na primeira vez (registro inicial) — depois disso
-o dispositivo fica identificado pela chave salva em
-`/var/lib/govpn/state.json`, então pode deixar o campo em branco depois
-do primeiro `systemctl start` funcionar, se quiser.
-
-Testado de ponta a ponta: rodei o instalador de verdade, configurei o
-`config.yml` com um servidor real, subi o serviço via `systemctl start`
-e confirmei a interface `govpn0` criada, IP atribuído pelo servidor e
-`systemctl is-enabled` mostrando `enabled` (sobe sozinho no boot).
 
 Pra desinstalar: `sudo ./scripts/uninstall-client.sh` (pergunta se quer
 apagar config/estado também, ou só remove o serviço e o binário).
 
-Esse instalador é só para Linux. Windows usa o `govpn-setup.exe`
-(instalador com tarefa agendada e config.yml) — veja a seção acima.
-
-## Pacote .deb (Debian/Ubuntu)
-
-Se preferir um pacote de verdade em vez do script (facilita gerenciar
-múltiplas máquinas, atualizar com `apt`/`dpkg`, etc), tem um empacotador
-em `packaging/deb/`. Ele faz exatamente a mesma coisa que o
-`install-client.sh` (binário em `/usr/bin`, config em `/etc/govpn/`,
-serviço systemd em `/lib/systemd/system`), só que embalado como `.deb`
-de verdade, com `postinst`/`prerm`/`postrm` cuidando de habilitar o
-serviço, proteger a config (`conffiles`, então um `apt upgrade` não
-sobrescreve sua auth key) e limpar tudo no `purge`.
-
-```
-./packaging/deb/build-deb.sh                # versão 1.0.0, amd64 (builda o binário se precisar)
-./packaging/deb/build-deb.sh 1.2.0 arm64     # versão e arquitetura customizadas
-
-sudo dpkg -i bin/govpn-client_1.0.0_amd64.deb
-sudo nano /etc/govpn/config.yml              # preenche server + authkey
-sudo systemctl start govpn-client
-```
-
-Desinstalar mantendo a config: `sudo apt remove govpn-client` (ou
-`dpkg -r`). Desinstalar removendo tudo (config + chaves):
-`sudo apt purge govpn-client` (ou `dpkg -P`).
-
-Testado de ponta a ponta: buildei o `.deb`, instalei com `dpkg -i` numa
-máquina real, confirmei no `dpkg -l` (status `ii`), serviço systemd
-habilitado automaticamente, `/etc/govpn/config.yml` criado com
-permissão 600, e o `dpkg -P` (purge) removendo tudo direitinho
-(config, estado, serviço) sem deixar resíduo.
+Quer empacotar você mesmo como `.deb` (em vez de baixar o pronto dos
+Releases)? Use `packaging/deb/build-deb.sh [versão] [arquitetura]` —
+gera `bin/govpn-client_<versão>_<arch>.deb` a partir do skeleton em
+`packaging/deb/`.
