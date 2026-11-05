@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -45,9 +46,42 @@ Usage:
   govpn-client status
       Prints the locally saved state (assigned IP, server, etc).
 
-For a graphical, system-tray client on Windows, use govpn-client-gui.exe
-instead (same profile file, same mesh).
+For a graphical, system-tray client on Windows and macOS, use
+govpn-client-gui(.exe) instead (same profile file, same mesh).
 `)
+}
+
+// statusWriter persists a small JSON file describing the live
+// connection state — used by the macOS tray app (client-gui), which
+// runs unprivileged and launches this CLI as a separate, elevated
+// (root) background process to actually create the network interface.
+// Since the two run as different users, they can't share in-process
+// state (the GUI's core.Engine), so the elevated process writes its
+// status here and the GUI polls the file instead. Not used by the
+// Linux/Windows path, where the GUI embeds its own Engine directly in
+// the same (already privileged) process.
+type statusFile struct {
+	Connected  bool      `json:"connected"`
+	AssignedIP string    `json:"assigned_ip,omitempty"`
+	LastError  string    `json:"last_error,omitempty"`
+	PID        int       `json:"pid"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+func writeStatusFile(path string, connected bool, ip, lastErr string) {
+	if path == "" {
+		return
+	}
+	sf := statusFile{Connected: connected, AssignedIP: ip, LastError: lastErr, PID: os.Getpid(), UpdatedAt: time.Now()}
+	b, err := json.MarshalIndent(sf, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return
+	}
+	os.Rename(tmp, path) // atomic-ish: never leaves a half-written file for the GUI to read
 }
 
 func cmdStatus(args []string) {
@@ -72,6 +106,7 @@ func cmdUp(args []string) {
 	iface := fs.String("iface", core.DefaultIfaceName(), "tun interface name")
 	pollInterval := fs.Duration("poll", 10*time.Second, "how often to refresh the peer list")
 	insecure := fs.Bool("insecure", false, "skip TLS certificate verification (needed for the server's default self-signed cert; only safe on a trusted network — prefer a real cert on the server instead)")
+	statusFilePath := fs.String("status-file", "", "write live connection status as JSON to this path on every change (used by client-gui on macOS, which runs this CLI as a separate elevated process and polls the file for status — see core.statusFile)")
 	fs.Parse(args)
 
 	// Track which flags the user actually passed on the command line, so
@@ -109,16 +144,43 @@ func cmdUp(args []string) {
 
 	eng := core.NewEngine(*iface, *pollInterval)
 	eng.InsecureTLS = *insecure
+	eng.OnStateChange = func(connected bool) {
+		ip := ""
+		if st := eng.State(); st != nil {
+			ip = st.AssignedIP
+		}
+		writeStatusFile(*statusFilePath, connected, ip, "")
+	}
 	if err := eng.LoadOrRegister(*server, *authKey, *hostname); err != nil {
+		writeStatusFile(*statusFilePath, false, "", err.Error())
 		log.Fatal(err)
 	}
 	st := eng.State()
 	log.Printf("profile ready: assigned_ip=%s subnet=%s server=%s", st.AssignedIP, st.SubnetCIDR, st.ServerURL)
 
 	if err := eng.Connect(); err != nil {
+		writeStatusFile(*statusFilePath, false, "", err.Error())
 		log.Fatalf("connect: %v", err)
 	}
 	defer eng.Disconnect()
+
+	// Heartbeat: refresh updated_at periodically even without a state
+	// change, so a poller (client-gui) can tell "still alive and
+	// connected" apart from "process died without a chance to write
+	// disconnected" (e.g. killed, crashed, machine slept).
+	if *statusFilePath != "" {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				ip := ""
+				if st := eng.State(); st != nil {
+					ip = st.AssignedIP
+				}
+				writeStatusFile(*statusFilePath, eng.IsRunning(), ip, "")
+			}
+		}()
+	}
 
 	select {} // run forever; Ctrl-C / signal kills the process
 }

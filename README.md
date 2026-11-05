@@ -117,23 +117,33 @@ binário avulso).
 
 ### 4. Cliente macOS
 
-Sem instalador publicado ainda — compile localmente (veja **Build a
-partir do código-fonte**) e rode:
+App de bandeja igual ao do Windows (ícone verde/vermelho, menu com
+Status/Reconectar/Abrir configuração/Abrir pasta de logs/Sair),
+baixado como artefato de build no GitHub Actions (compilado num
+runner macOS de verdade — não dá pra cross-compilar isso daqui do
+Linux, a lib do ícone de bandeja usa Cocoa):
+[**Actions → Build macOS client-gui → último run → artefato
+`govpn-client-gui-macos`**](https://github.com/cleberreissosdocs/govpn/actions/workflows/macos-client-gui.yml)
+
+Instalação:
 
 ```bash
-sudo ./govpn-client-darwin-arm64 up --server http://SEU_SERVIDOR:28443 --authkey SUA_AUTH_KEY --hostname meu-mac
-# Intel: use govpn-client-darwin-amd64 no lugar
+unzip govpn-client-gui-macos.zip
+./install-client-gui-macos.sh
 ```
 
-A interface criada se chama `utunN` (não `govpn0` — limitação do
-kernel), o cliente lida com isso sozinho. Gatekeeper reclamando do
-binário: `xattr -d com.apple.quarantine ./govpn-client-darwin-arm64`
-antes de rodar.
+Diferença importante em relação ao Windows: no Windows o app inteiro
+roda como Administrador (a Tarefa Agendada sobe assim), então criar a
+interface de rede é transparente. No macOS isso não é possível — um
+processo root não consegue mostrar ícone na barra de menu. Por isso
+este app roda sem privilégio nenhum e, só na hora de conectar, pede
+sua senha de administrador pelo diálogo padrão do macOS (é a mesma
+senha da sua conta). Se você cancelar esse diálogo, o app não fica
+tentando de novo sozinho a cada 15s (evita ficar martelando o pedido de
+senha) — use "Reconectar agora" no menu quando quiser tentar de novo.
 
-> Limitação honesta: não tenho um Mac real pra testar — binário só
-> cross-compilado e revisado por código, mesma lib (wireguard-go) que a
-> implementação oficial do WireGuard usa para `utun` no Darwin. Teste
-> antes de confiar cegamente.
+Preferir linha de comando em vez do app gráfico? Veja **Build a partir
+do código-fonte** mais abaixo pra compilar o `govpn-client` CLI puro.
 
 ## Segurança
 
@@ -295,6 +305,19 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-H=windowsgui" -o bin
 cd client-gui && makensis govpn-installer.nsi   # gera bin/govpn-setup.exe (requer `apt install nsis`)
 ```
 
+Cliente gráfico macOS (bandeja do sistema): **não cross-compila daqui**
+— usa cgo + Cocoa (`getlantern/systray`), que exige o toolchain real do
+Xcode. Só builda numa máquina macOS de verdade:
+
+```bash
+# rodar isso NUM MAC, não aqui:
+./client-gui/darwin/build-app.sh   # gera dist/govpn-client-gui-macos.zip
+```
+
+O workflow `.github/workflows/macos-client-gui.yml` faz exatamente
+isso automaticamente num runner macOS do GitHub Actions a cada release
+publicado (ou sob demanda, via "Run workflow").
+
 O binário CLI Windows precisa do `wintun.dll` (da WireGuard Foundation,
 https://www.wintun.net/) na mesma pasta do `.exe`, ou em
 `C:\Windows\System32`. É o mesmo driver que o WireGuard oficial para
@@ -373,6 +396,84 @@ verdade com IP atribuído pelo servidor, o dispositivo aparecendo
 (capturado via sessão RDP). Também confirmei que, sem a elevação via
 Tarefa Agendada, a criação da interface falha com "Acesso negado" — por
 isso o instalador usa esse mecanismo em vez de um atalho simples.
+
+## Cliente gráfico para macOS (barra de menu)
+
+Mesma ideia e o mesmo menu do cliente Windows (`client-gui/main_darwin.go`),
+adaptados às diferenças reais de segurança do macOS — leia a limitação
+na seção **Instalação** acima antes de instalar.
+
+**Por que o código é estruturalmente diferente do Windows por baixo:**
+no Windows o processo inteiro roda elevado (a Tarefa Agendada sobe
+assim), então o mesmo processo mostra o ícone E cria a interface de
+rede. No macOS um processo root não consegue se conectar à sessão
+gráfica do usuário (não é uma permissão, é uma separação dura do
+sistema) — então aqui são efetivamente dois processos: o app de
+bandeja (sem privilégio nenhum, é ele que aparece na barra de menu) e,
+só quando precisa conectar, uma cópia do `govpn-client` (CLI) iniciada
+como root via o diálogo de senha padrão do macOS (`osascript ... with
+administrator privileges`). Os dois não compartilham memória, então
+conversam por dois arquivos pequenos em `~/.govpn/`: um status em JSON
+que o processo elevado escreve e a bandeja só lê (`gui_status.json`), e
+um pidfile para a bandeja conseguir pedir pra ele parar
+(`gui_child.pid`).
+
+Instalação (gera o `.app` num runner macOS do GitHub Actions — veja
+**Instalação** acima):
+
+1. Baixe e extraia `govpn-client-gui-macos.zip`.
+2. Rode `./install-client-gui-macos.sh` (copia o app pra
+   `/Applications`, registra um LaunchAgent em
+   `~/Library/LaunchAgents` que sobe o app — sem privilégio — a cada
+   login).
+3. Clique com o botão direito no ícone da bandeja → **Abrir
+   configuração**, preencha:
+   ```yaml
+   server: "http://SEU_SERVIDOR:28443"
+   authkey: "SUA_AUTH_KEY"
+   ```
+   salve e feche o TextEdit.
+4. O app detecta o arquivo salvo e tenta conectar sozinho em
+   instantes — nesse momento o macOS mostra o diálogo pedindo sua senha
+   de administrador (é o passo que cria a interface `utun`). Depois de
+   digitar, a interface sobe e o ícone fica verde.
+
+O ícone (perto do relógio) muda de cor exatamente como no Windows:
+
+- 🔴 **Vermelho** — desconectado / aguardando configuração válida / erro
+- 🟢 **Verde** — conectado, túnel ativo
+
+Menu (clique no ícone):
+
+- **Status** (linha no topo, só informativa)
+- **Reconectar agora** — força uma nova tentativa (pode pedir a senha de novo)
+- **Desconectar** — para o túnel sem fechar o ícone da bandeja (pede senha)
+- **Abrir configuração** — abre `~/Library/Application Support/govpn/config.yml` no TextEdit
+- **Abrir pasta de logs** — abre `~/.govpn` no Finder (tem `state.json`, `gui_status.json`, `gui_child.log`)
+- **Sair** — tenta parar o túnel (pede senha se estiver rodando) e fecha o ícone
+
+A auth key só é usada no primeiro registro bem-sucedido — depois disso
+o dispositivo fica identificado pelo `state.json` salvo em `~/.govpn`
+(o app cuida de apontar o processo elevado pra esse mesmo diretório via
+`GOVPN_STATE_DIR`, já que o `$HOME` de um processo root não é o seu).
+
+Diferença de comportamento em relação ao Windows (consciente, não bug):
+se você cancelar o diálogo de senha, o app NÃO fica repetindo o pedido
+a cada 15 segundos — ficaria indistinguível de malware tentando
+escalar privilégio. Em vez disso ele só tenta de novo quando você
+clica em "Reconectar agora" ou edita o `config.yml` de novo.
+
+Desinstalar: rode `uninstall-client-gui-macos.sh` (vem no mesmo zip) —
+para o túnel, remove o LaunchAgent e o app, e pergunta se quer apagar
+config/estado também.
+
+> Limitação honesta: não tenho um Mac real aqui pra testar — o código
+> foi revisado cuidadosamente e a API da lib de bandeja (`getlantern/
+> systray`) conferida contra a documentação, mas o binário real só é
+> gerado pelo runner macOS do GitHub Actions, nunca rodado por mim.
+> Teste antes de confiar cegamente, e me avise se achar algo quebrado
+> (ícone não aparece, diálogo de senha não vem, LaunchAgent não sobe
+> no login, etc.).
 
 ## Painel de administração
 

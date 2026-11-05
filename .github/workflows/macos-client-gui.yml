@@ -1,0 +1,42 @@
+name: Build macOS client-gui
+
+# Builds govpn-client-gui.app on a real macOS runner (the tray icon
+# uses cgo + Cocoa, which cannot be cross-compiled from Linux — this
+# workflow is the only place this binary actually gets compiled).
+#
+# - On a published GitHub Release: builds and uploads the zip as a
+#   release asset automatically (same place the Windows/Linux
+#   installers already live).
+# - Manual run (workflow_dispatch): builds and uploads as a workflow
+#   artifact instead, for testing before cutting a release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Build govpn-client-gui.app
+        run: ./client-gui/darwin/build-app.sh
+
+      - name: Upload as release asset
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/govpn-client-gui-macos.zip --clobber
+
+      - name: Upload as workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: govpn-client-gui-macos
+          path: dist/govpn-client-gui-macos.zip

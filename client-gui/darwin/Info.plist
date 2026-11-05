@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>govpn</string>
+	<key>CFBundleDisplayName</key>
+	<string>govpn</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.cleberreissosdocs.govpn.client-gui</string>
+	<key>CFBundleVersion</key>
+	<string>1.0.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>govpn-client-gui</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<!-- LSUIElement: pure menu-bar app, no Dock icon / no app window,
+	     same visual footprint as the Windows tray client. -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>

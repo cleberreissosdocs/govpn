@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.cleberreissosdocs.govpn.client-gui</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/govpn-client-gui.app/Contents/MacOS/govpn-client-gui</string>
+	</array>
+	<!-- Runs at every login, in the user's own GUI session (so the
+	     menu-bar icon actually shows up) — NOT at boot without login,
+	     and NOT as root. The elevated step (creating the tun
+	     interface) happens later, on demand, via its own admin-
+	     password prompt. See main_darwin.go for why. -->
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/tmp/govpn-client-gui.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/govpn-client-gui.log</string>
+</dict>
+</plist>
