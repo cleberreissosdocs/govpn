@@ -20,13 +20,14 @@ rm -rf dist
 mkdir -p "$APPDIR/Contents/MacOS" "$APPDIR/Contents/Resources"
 
 echo "==> Building govpn-client-gui (arm64 + amd64)"
+export CGO_ENABLED=1   # required: the tray icon (getlantern/systray) uses cgo+Cocoa on darwin
 GOOS=darwin GOARCH=arm64 go build -o /tmp/govpn-gui-arm64 ./client-gui/
 GOOS=darwin GOARCH=amd64 go build -o /tmp/govpn-gui-amd64 ./client-gui/
 lipo -create -output "$APPDIR/Contents/MacOS/govpn-client-gui" /tmp/govpn-gui-arm64 /tmp/govpn-gui-amd64
 
 echo "==> Building govpn-client CLI (arm64 + amd64) — bundled alongside, launched elevated on demand"
-GOOS=darwin GOARCH=arm64 go build -o /tmp/govpn-cli-arm64 ./client/
-GOOS=darwin GOARCH=amd64 go build -o /tmp/govpn-cli-amd64 ./client/
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/govpn-cli-arm64 ./client/
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o /tmp/govpn-cli-amd64 ./client/
 lipo -create -output "$APPDIR/Contents/MacOS/govpn-client" /tmp/govpn-cli-arm64 /tmp/govpn-cli-amd64
 
 chmod +x "$APPDIR/Contents/MacOS/"*
