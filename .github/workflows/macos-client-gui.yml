@@ -3,10 +3,13 @@ name: Build macOS client-gui
 # Builds govpn-client-gui.app on a real macOS runner (the tray icon
 # uses cgo + Cocoa, which cannot be cross-compiled from Linux — this
 # workflow is the only place this binary actually gets compiled).
+# Produces TWO variants (see client-gui/darwin/build-app.sh): a
+# universal build (arm64+Intel, current Macs) and an Intel-only build
+# for older Macs capped at macOS Ventura (13) or earlier.
 #
-# - On a published GitHub Release: builds and uploads the zip as a
-#   release asset automatically (same place the Windows/Linux
-#   installers already live).
+# - On a published GitHub Release: builds and uploads both as release
+#   assets automatically (same place the Windows/Linux installers
+#   already live).
 # - Manual run (workflow_dispatch): builds and uploads as a workflow
 #   artifact instead, for testing before cutting a release.
 
@@ -25,7 +28,7 @@ jobs:
         with:
           go-version: "1.23"
 
-      - name: Build govpn-client-gui.app
+      - name: Build govpn-client-gui.app (both variants)
         run: ./client-gui/darwin/build-app.sh
 
       - name: Upload as release asset
@@ -35,6 +38,8 @@ jobs:
         run: |
           gh release upload "${{ github.event.release.tag_name }}" dist/govpn-client-gui-macos.zip --clobber
           gh release upload "${{ github.event.release.tag_name }}" dist/govpn-client-gui.pkg --clobber
+          gh release upload "${{ github.event.release.tag_name }}" dist/govpn-client-gui-ventura-intel-macos.zip --clobber
+          gh release upload "${{ github.event.release.tag_name }}" dist/govpn-client-gui-ventura-intel.pkg --clobber
 
       - name: Upload as workflow artifact
         if: github.event_name == 'workflow_dispatch'
@@ -44,3 +49,5 @@ jobs:
           path: |
             dist/govpn-client-gui-macos.zip
             dist/govpn-client-gui.pkg
+            dist/govpn-client-gui-ventura-intel-macos.zip
+            dist/govpn-client-gui-ventura-intel.pkg

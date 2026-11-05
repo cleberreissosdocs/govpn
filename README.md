@@ -122,10 +122,25 @@ Status/Reconectar/Abrir configuração/Abrir pasta de logs/Sair),
 instalado com um `.pkg` de verdade (duplo clique, assistente
 Continuar/Instalar, igual o `govpn-setup.exe` do Windows), compilado
 num runner macOS de verdade pelo GitHub Actions (não dá pra
-cross-compilar isso do Linux, a lib do ícone de bandeja usa Cocoa):
-[**govpn-client-gui.pkg**](https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-client-gui.pkg)
+cross-compilar isso do Linux, a lib do ícone de bandeja usa Cocoa).
 
-1. Baixe e dê duplo clique no `.pkg`.
+Duas versões, mesmo código/funcionalidade — a diferença é só quais
+arquiteturas de CPU (e portanto qual macOS mínimo) cada uma suporta:
+
+| | Mac atual (Apple Silicon ou Intel recente) | Mac antigo (Intel, ~2013-2015, preso no Ventura/13 ou anterior) |
+|---|---|---|
+| Baixe | [**govpn-client-gui.pkg**](https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-client-gui.pkg) | [**govpn-client-gui-ventura-intel.pkg**](https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-client-gui-ventura-intel.pkg) |
+| Arquitetura | universal (arm64 + Intel) | só Intel (x86_64) |
+| macOS mínimo | 11 (Big Sur) | 10.15 (Catalina) |
+
+O `.pkg` universal já funciona num Intel rodando Ventura (13 ≥ seu
+mínimo de 11) — a variante "ventura-intel" existe à parte porque foi
+pedida especificamente para hardware antigo: download menor (sem a
+fatia arm64 que esse Mac nunca vai usar) e compatibilidade garantida
+mais pra trás. Fonte das duas em `client-gui/darwin/build-app.sh` (a
+mesma automação gera ambas a cada release).
+
+1. Baixe e dê duplo clique no `.pkg` (o da sua coluna acima).
 2. Se aparecer "não é possível verificar o desenvolvedor" (o instalador
    não é assinado — não temos certificado pago da Apple): clique com o
    botão direito no arquivo → **Abrir** → **Abrir** de novo na janela
@@ -141,9 +156,11 @@ cross-compilar isso do Linux, a lib do ícone de bandeja usa Cocoa):
 
 Prefere instalar via Terminal em vez do assistente gráfico (ou seu
 antivírus/MDM bloqueia `.pkg` não assinado)? Tem uma alternativa em
-`.zip` com os mesmos arquivos + um script:
+`.zip` com os mesmos arquivos + um script, na mesma coluna de arquitetura:
 [**govpn-client-gui-macos.zip**](https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-client-gui-macos.zip)
-→ extraia e rode `./install-client-gui-macos.sh`.
+(atual) ou
+[**govpn-client-gui-ventura-intel-macos.zip**](https://github.com/cleberreissosdocs/govpn/releases/latest/download/govpn-client-gui-ventura-intel-macos.zip)
+(antigo) → extraia e rode `./install-client-gui-macos.sh`.
 
 Diferença importante em relação ao Windows: no Windows o app inteiro
 roda como Administrador o tempo todo (a Tarefa Agendada sobe assim).

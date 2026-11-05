@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>govpn</string>
+	<key>CFBundleDisplayName</key>
+	<string>govpn</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.cleberreissosdocs.govpn.client-gui</string>
+	<key>CFBundleVersion</key>
+	<string>1.0.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>govpn-client-gui</string>
+	<!-- Variante "ventura": Intel-only (x86_64), sem a fatia arm64, pra
+	     Macs antigos (ex: 2013) que so rodam ate o macOS Ventura (13)
+	     via hardware original ou patch tipo OpenCore Legacy Patcher.
+	     10.15 e o piso real do toolchain Go atual pra darwin/amd64 --
+	     setamos aqui em vez do 11.0 da variante universal pra nao
+	     bloquear artificialmente quem roda algo anterior ao Ventura. -->
+	<key>LSMinimumSystemVersion</key>
+	<string>10.15</string>
+	<!-- LSUIElement: pure menu-bar app, no Dock icon / no app window,
+	     same visual footprint as the Windows tray client. -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
