@@ -132,7 +132,10 @@ cross-compilar isso do Linux, a lib do ícone de bandeja usa Cocoa):
    de aviso. Ou: Ajustes do Sistema → Privacidade e Segurança → role até
    o aviso sobre o `.pkg` → **Abrir Mesmo Assim**.
 3. Siga o assistente (Continuar → Instalar), digite sua senha do Mac
-   quando pedir.
+   quando pedir — **essa é a única vez que vai pedir senha**: o
+   instalador já sobe um serviço rodando como root desde já, então
+   depois disso o app nunca mais pede senha de novo, mesmo pra
+   conectar/reconectar.
 4. Pronto — o ícone já aparece na barra de menu (não precisa reiniciar
    nem fazer login de novo).
 
@@ -143,14 +146,14 @@ antivírus/MDM bloqueia `.pkg` não assinado)? Tem uma alternativa em
 → extraia e rode `./install-client-gui-macos.sh`.
 
 Diferença importante em relação ao Windows: no Windows o app inteiro
-roda como Administrador (a Tarefa Agendada sobe assim), então criar a
-interface de rede é transparente. No macOS isso não é possível — um
-processo root não consegue mostrar ícone na barra de menu. Por isso
-este app roda sem privilégio nenhum e, só na hora de conectar, pede
-sua senha de administrador pelo diálogo padrão do macOS (é a mesma
-senha da sua conta). Se você cancelar esse diálogo, o app não fica
-tentando de novo sozinho a cada 15s (evita ficar martelando o pedido de
-senha) — use "Reconectar agora" no menu quando quiser tentar de novo.
+roda como Administrador o tempo todo (a Tarefa Agendada sobe assim).
+No macOS isso não é possível — um processo root não consegue mostrar
+ícone na barra de menu. A solução aqui é diferente de "pedir senha
+toda vez": o instalador sobe um **serviço** (rodando como root, ligado
+desde o boot) que cuida da VPN sozinho para sempre, e o ícone da
+bandeja (sem privilégio nenhum) só mostra o status dele e manda pedidos
+de "reconectar"/"desconectar" — sem jamais pedir senha depois da
+instalação.
 
 Preferir linha de comando em vez do app gráfico? Veja **Build a partir
 do código-fonte** mais abaixo pra compilar o `govpn-client` CLI puro.
@@ -409,30 +412,46 @@ isso o instalador usa esse mecanismo em vez de um atalho simples.
 
 ## Cliente gráfico para macOS (barra de menu)
 
-Mesma ideia e o mesmo menu do cliente Windows (`client-gui/main_darwin.go`),
-adaptados às diferenças reais de segurança do macOS — leia a limitação
-na seção **Instalação** acima antes de instalar.
+Mesma ideia e o mesmo ícone/menu do cliente Windows
+(`client-gui/main_darwin.go`), com o mesmo arquivo de ícone (extraído
+direto do `.ico` do Windows) e adaptado às diferenças reais de
+segurança do macOS — leia a limitação na seção **Instalação** acima
+antes de instalar.
 
 **Por que o código é estruturalmente diferente do Windows por baixo:**
 no Windows o processo inteiro roda elevado (a Tarefa Agendada sobe
 assim), então o mesmo processo mostra o ícone E cria a interface de
 rede. No macOS um processo root não consegue se conectar à sessão
 gráfica do usuário (não é uma permissão, é uma separação dura do
-sistema) — então aqui são efetivamente dois processos: o app de
-bandeja (sem privilégio nenhum, é ele que aparece na barra de menu) e,
-só quando precisa conectar, uma cópia do `govpn-client` (CLI) iniciada
-como root via o diálogo de senha padrão do macOS (`osascript ... with
-administrator privileges`). Os dois não compartilham memória, então
-conversam por dois arquivos pequenos em `~/.govpn/`: um status em JSON
-que o processo elevado escreve e a bandeja só lê (`gui_status.json`), e
-um pidfile para a bandeja conseguir pedir pra ele parar
-(`gui_child.pid`).
+sistema) — então aqui são dois processos separados desde a instalação:
+
+- um **serviço** (`govpn-client daemon`, novo subcomando do CLI),
+  rodando como root via um `LaunchDaemon` desde o boot, que cuida da
+  VPN de verdade (registra o dispositivo, cria a interface `utun`,
+  sincroniza peers, re-tenta sozinho se cair) — pedir senha pra isso
+  acontece **uma única vez**, durante a instalação do `.pkg` (que já
+  roda como root de qualquer forma);
+- o **app de bandeja** (sem privilégio nenhum), que só lê o status que
+  o serviço escreve e manda pedidos de "reconectar"/"desconectar"
+  tocando arquivos numa pasta compartilhada — nunca mais pede senha
+  depois de instalado.
+
+Os dois conversam por arquivos em `/Library/Application Support/govpn/`
+(tornada gravável por qualquer conta de usuário padrão do Mac na
+instalação, sem precisar de sudo no dia a dia):
+
+- `config.yml` — editável pelo app ("Abrir configuração")
+- `status.json` — escrito pelo serviço, só lido pela bandeja
+- `reconnect` / `disconnect` — arquivos "toque pra acionar": a bandeja
+  atualiza a data de modificação, o serviço fica de olho (poll a cada
+  2s) e reage
 
 Instalação (gera o `.pkg`/`.app` num runner macOS do GitHub Actions —
 veja **Instalação** acima):
 
 1. Baixe `govpn-client-gui.pkg` e dê duplo clique — siga o assistente
-   (Continuar → Instalar, pede sua senha do Mac).
+   (Continuar → Instalar, pede sua senha do Mac **uma única vez**: é
+   nesse momento que o serviço sobe).
 2. Clique com o botão direito no ícone da bandeja → **Abrir
    configuração**, preencha:
    ```yaml
@@ -440,12 +459,12 @@ veja **Instalação** acima):
    authkey: "SUA_AUTH_KEY"
    ```
    salve e feche o TextEdit.
-3. O app detecta o arquivo salvo e tenta conectar sozinho em
-   instantes — nesse momento o macOS mostra o diálogo pedindo sua senha
-   de administrador (é o passo que cria a interface `utun`). Depois de
-   digitar, a interface sobe e o ícone fica verde.
+3. O serviço (que já está rodando desde a instalação) detecta o
+   arquivo salvo e conecta sozinho em instantes — sem pedir senha
+   nenhuma. A interface sobe e o ícone fica verde.
 
-O ícone (perto do relógio) muda de cor exatamente como no Windows:
+O ícone (perto do relógio) muda de cor exatamente como no Windows —
+mesmo arquivo de imagem, extraído do `.ico` original:
 
 - 🔴 **Vermelho** — desconectado / aguardando configuração válida / erro
 - 🟢 **Verde** — conectado, túnel ativo
@@ -453,37 +472,44 @@ O ícone (perto do relógio) muda de cor exatamente como no Windows:
 Menu (clique no ícone):
 
 - **Status** (linha no topo, só informativa)
-- **Reconectar agora** — força uma nova tentativa (pode pedir a senha de novo)
-- **Desconectar** — para o túnel sem fechar o ícone da bandeja (pede senha)
-- **Abrir configuração** — abre `~/Library/Application Support/govpn/config.yml` no TextEdit
-- **Abrir pasta de logs** — abre `~/.govpn` no Finder (tem `state.json`, `gui_status.json`, `gui_child.log`)
-- **Sair** — tenta parar o túnel (pede senha se estiver rodando) e fecha o ícone
+- **Reconectar agora** — pede pro serviço tentar de novo (sem senha)
+- **Desconectar** — pede pro serviço parar o túnel (sem senha)
+- **Abrir configuração** — abre `/Library/Application Support/govpn/config.yml` no TextEdit
+- **Abrir pasta de logs** — abre essa mesma pasta no Finder (tem `status.json`, `daemon.log`) e também `~/.govpn`
+- **Sair** — fecha só o ícone; o serviço (e o túnel, se conectado) continua rodando em segundo plano, igual o `systemd` no Linux — use "Desconectar" antes se quiser parar o túnel de verdade
 
 A auth key só é usada no primeiro registro bem-sucedido — depois disso
-o dispositivo fica identificado pelo `state.json` salvo em `~/.govpn`
-(o app cuida de apontar o processo elevado pra esse mesmo diretório via
-`GOVPN_STATE_DIR`, já que o `$HOME` de um processo root não é o seu).
+o dispositivo fica identificado pelo `state.json` salvo em
+`~/.govpn` do usuário que rodou a instalação originalmente (já que o
+serviço roda como root, `~/.govpn` aqui é o home de root — funciona
+igual, só não é a mesma pasta que o `govpn-client status` de um usuário
+normal veria; use "Abrir pasta de logs" na bandeja pra achar o estado
+certo).
 
-Diferença de comportamento em relação ao Windows (consciente, não bug):
-se você cancelar o diálogo de senha, o app NÃO fica repetindo o pedido
-a cada 15 segundos — ficaria indistinguível de malware tentando
-escalar privilégio. Em vez disso ele só tenta de novo quando você
-clica em "Reconectar agora" ou edita o `config.yml` de novo.
+Nota de segurança consciente: como a pasta compartilhada precisa ser
+editável sem sudo pro app de bandeja funcionar, qualquer conta de
+usuário padrão do Mac (grupo `staff`, o grupo de toda conta normal)
+consegue editar o `config.yml` ou pedir reconectar/desconectar — não é
+um escalonamento de privilégio novo (o MVP já é full-mesh sem ACL por
+dispositivo, documentado em **Limitações do MVP**), mas vale saber que
+nessa máquina especificamente qualquer usuário local pode trocar pra
+qual servidor/auth key o dispositivo se conecta.
 
 Desinstalar: o `.pkg` não cria um desinstalador automático (limitação
 do `pkgbuild` sem infraestrutura paga de assinatura) — baixe o
 `govpn-client-gui-macos.zip` (mesmo link da seção **Instalação**) só
 pelo script `uninstall-client-gui-macos.sh` que vem dentro: para o
-túnel, remove o LaunchAgent e o app, e pergunta se quer apagar
-config/estado também.
+serviço (LaunchDaemon), remove o LaunchAgent e o app, e pergunta se
+quer apagar config/estado também.
 
 > Limitação honesta: não tenho um Mac real aqui pra testar — o código
-> foi revisado cuidadosamente e a API da lib de bandeja (`getlantern/
-> systray`) conferida contra a documentação, mas o binário real só é
-> gerado pelo runner macOS do GitHub Actions, nunca rodado por mim.
-> Teste antes de confiar cegamente, e me avise se achar algo quebrado
-> (ícone não aparece, diálogo de senha não vem, LaunchAgent não sobe
-> no login, etc.).
+> foi revisado cuidadosamente, a API da lib de bandeja (`getlantern/
+> systray`) conferida contra a documentação, e o build real já roda
+> limpo no runner macOS do GitHub Actions (compilação confirmada), mas
+> ninguém rodou isso de fato num Mac. Teste antes de confiar
+> cegamente, e me avise se achar algo quebrado (ícone não aparece,
+> LaunchDaemon não sobe no boot, permissões da pasta compartilhada
+> erradas, etc.).
 
 ## Painel de administração
 

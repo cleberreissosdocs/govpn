@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.cleberreissosdocs.govpn.client-daemon</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/govpn-client-gui.app/Contents/MacOS/govpn-client</string>
+		<string>daemon</string>
+		<string>--config</string>
+		<string>/Library/Application Support/govpn/config.yml</string>
+		<string>--status-file</string>
+		<string>/Library/Application Support/govpn/status.json</string>
+		<string>--cmd-dir</string>
+		<string>/Library/Application Support/govpn</string>
+	</array>
+	<!-- Runs as root (LaunchDaemons do, by default — no UserName key
+	     needed), starting at boot, before any login. This is the ONLY
+	     place a password is ever needed: the .pkg installer that sets
+	     this up already runs as root, so there's no extra prompt.
+	     From here on the tray app (a separate, unprivileged
+	     LaunchAgent) only ever reads status.json and touches request
+	     files in the same folder — never asks for a password again.
+	     See client-gui/main_darwin.go and client/main.go's cmdDaemon. -->
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Library/Application Support/govpn/daemon.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Library/Application Support/govpn/daemon.log</string>
+</dict>
+</plist>

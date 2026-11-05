@@ -10,9 +10,11 @@
 	</array>
 	<!-- Runs at every login, in the user's own GUI session (so the
 	     menu-bar icon actually shows up) — NOT at boot without login,
-	     and NOT as root. The elevated step (creating the tun
-	     interface) happens later, on demand, via its own admin-
-	     password prompt. See main_darwin.go for why. -->
+	     and NOT as root. It only displays status; the privileged work
+	     (creating the tun interface) is done by a separate root
+	     LaunchDaemon set up once at install time — see
+	     com.cleberreissosdocs.govpn.client-daemon.plist and
+	     main_darwin.go for why. -->
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardOutPath</key>
